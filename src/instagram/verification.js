@@ -5,7 +5,8 @@ const CHALLENGE_PATTERNS = [
   { type: 'phone_verification', pattern: /confirm your phone|phone number verification|enter your phone number|security code sent to your phone/i },
 ];
 
-const EMAIL_VERIFICATION = /confirm your email|verify your email|check your email|email verification|enter the confirmation code sent to your email/i;
+const EMAIL_VERIFICATION = /confirm your email|verify your email|check your email|email verification|enter the confirmation code sent to your email|(?:enter|type).{0,40}(?:confirmation|verification|security )?code.{0,40}(?:email|email address)|code.{0,40}sent.{0,20}(?:email|email address)/i;
+const ADDITIONAL_SECURITY_CHECK = /two[- ]factor|authentication code|security challenge|confirm your identity|verify your identity|enter (?:the )?(?:\d{1,2}[- ]digit )?security code/i;
 const SUCCESS = /welcome to instagram|your account has been created|account created successfully|thanks for signing up/i;
 const USERNAME_UNAVAILABLE = /(?:this\s+)?username\s+(?:is\s+)?(?:not available|unavailable|isn't available|is not available|already taken|has already been taken)|username.{0,40}(?:already taken|unavailable)|(?:not available|already taken).{0,40}username/i;
 const EMAIL_REGISTERED = /(?:email address|email).{0,60}(?:already (?:registered|exists|in use|taken)|is already associated)|(?:already registered|account already exists).{0,60}(?:email|address)/i;
@@ -48,12 +49,13 @@ export async function classifyPage(page) {
   for (const challenge of CHALLENGE_PATTERNS) {
     if (challenge.pattern.test(combined)) return { status: 'challenge', reason: challenge.type };
   }
+  if (EMAIL_VERIFICATION.test(combined)) return { status: 'verification_required', reason: 'email_verification' };
+  if (ADDITIONAL_SECURITY_CHECK.test(combined)) return { status: 'challenge', reason: 'additional_verification' };
   if (/incorrect password|password was incorrect|username or password.*incorrect|account doesn't exist|user not found/i.test(combined)) {
     return { status: 'rejected', reason: 'login_rejected' };
   }
   if (EMAIL_REGISTERED.test(combined)) return { status: 'rejected', reason: 'email_already_registered' };
   if (USERNAME_UNAVAILABLE.test(combined)) return { status: 'rejected', reason: 'username_unavailable' };
-  if (EMAIL_VERIFICATION.test(combined)) return { status: 'verification_required', reason: 'email_verification' };
   if (BIRTHDAY_PROMPT.test(visibleText) && await hasBirthdayControls(page)) {
     return { status: 'birthday_confirmation', reason: 'birthday_confirmation_required' };
   }
