@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   signup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       REGISTRANT_FULL_NAME: ${{ secrets.REGISTRANT_FULL_NAME }}
