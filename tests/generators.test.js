@@ -62,6 +62,8 @@ test('real mode fails closed unless exact authorization and truthful fields are 
     ACCOUNT_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   };
   assert.equal(createConfig(env).authorized, true);
+  assert.deepEqual(createConfig({ ...env, INSTAGRAM_EXCLUDED_USERNAMES: 'OldAccount123, igmockuser' }).excludedUsernames, ['oldaccount123', 'igmockuser']);
+  assert.throws(() => createConfig({ ...env, INSTAGRAM_EXCLUDED_USERNAMES: 'invalid name' }), /invalid username/i);
   assert.throws(() => createConfig({ ...env, REGISTRANT_DOB: '2018-01-01' }), /truthful, valid/i);
   assert.throws(() => createConfig({ ...env, REAL_SIGNUP_CONFIRMATION: 'yes' }), /authorization/i);
 });

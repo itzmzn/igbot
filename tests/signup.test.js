@@ -4,7 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchChromium } from '../src/browser/chromium.js';
 import { runSignup } from '../src/instagram/signup.js';
-import { classifyPage } from '../src/instagram/verification.js';
+import { classifyPage, collectPageDiagnostics } from '../src/instagram/verification.js';
 
 const mockRegistration = {
   email: 'mock.user@example.invalid',
@@ -309,6 +309,81 @@ test('Playwright refuses to submit if every bounded username candidate is unavai
   }
 });
 
+test('signup reports a post-submit field validation error without retrying', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<!doctype html><html><body>
+      <form>
+        <label>Email<input type="email" name="email"></label>
+        <label>Full name<input name="fullName"></label>
+        <label>Username<input name="username"></label>
+        <label>Password<input type="password" name="password"></label>
+        <label>Date of birth<input type="date" name="birthday"></label>
+        <button type="submit">Sign up</button>
+      </form>
+      <script>
+        window.signupSubmissionCount = 0;
+        document.querySelector('form').addEventListener('submit', event => {
+          event.preventDefault();
+          window.signupSubmissionCount += 1;
+          document.body.innerHTML = '<div role="alert">Please enter a valid email address.</div>';
+        });
+      </script>
+    </body></html>`);
+    const result = await runSignup(page, { ...mockRegistration, authorized: true, navigate: false, waitMs: 1000, usernameCheckWaitMs: 0 });
+    assert.equal(result.status, 'validation_error');
+    assert.equal(result.reason, 'invalid_email');
+    assert.equal(result.submitAttempted, true);
+    assert.equal(await page.evaluate(() => window.signupSubmissionCount), 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('signup refuses to submit when the submit control is disabled', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(formMarkup().replace('<button type="submit">Sign up</button>', '<button type="submit" disabled>Sign up</button>'));
+    await assert.rejects(runSignup(page, { ...mockRegistration, authorized: true, navigate: false, usernameCheckWaitMs: 0 }), /submit control is disabled/i);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('signup reports an unknown post-submit outcome without a second submission', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<!doctype html><html><body>
+      <form>
+        <label>Email<input type="email" name="email"></label>
+        <label>Full name<input name="fullName"></label>
+        <label>Username<input name="username"></label>
+        <label>Password<input type="password" name="password"></label>
+        <label>Date of birth<input type="date" name="birthday"></label>
+        <button type="submit">Sign up</button>
+      </form>
+      <script>
+        window.signupSubmissionCount = 0;
+        document.querySelector('form').addEventListener('submit', event => {
+          event.preventDefault();
+          window.signupSubmissionCount += 1;
+          document.body.innerHTML = '<main><p>Processing request</p></main>';
+        });
+      </script>
+    </body></html>`);
+    const result = await runSignup(page, { ...mockRegistration, authorized: true, navigate: false, waitMs: 500, usernameCheckWaitMs: 0 });
+    assert.equal(result.status, 'unknown');
+    assert.equal(result.reason, 'no_known_terminal_state');
+    assert.equal(result.submitAttempted, true);
+    assert.equal(await page.evaluate(() => window.signupSubmissionCount), 1);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('signup cannot submit without explicit authorization', async () => {
   const browser = await launchChromium();
   try {
@@ -347,12 +422,43 @@ test('page-state detection distinguishes verification and security challenges', 
       ['Confirm your phone number to continue.', { status: 'challenge', reason: 'phone_verification' }],
       ['Check your email for the confirmation code.', { status: 'verification_required', reason: 'email_verification' }],
       ["This username isn't available. Please try another.", { status: 'rejected', reason: 'username_unavailable' }],
+      ['This email address is already registered.', { status: 'rejected', reason: 'email_already_registered' }],
+      ['Please enter a valid email address.', { status: 'validation_error', reason: 'invalid_email' }],
+      ['Please fill in all required fields.', { status: 'validation_error', reason: 'required_fields' }],
+      ['Welcome to Instagram!', { status: 'confirmed', reason: 'success_message' }],
       ['A page with no known completion or challenge copy.', { status: 'unknown', reason: 'no_known_terminal_state' }],
     ];
     for (const [copy, expected] of cases) {
       await page.setContent(`<html><body><main>${copy}</main></body></html>`);
       assert.deepEqual(await classifyPage(page), expected);
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('birthday confirmation is identified as a separate post-submit screen', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<html><body><h1>Add your birthday</h1><label>Date of birth<input type="date"></label></body></html>');
+    assert.deepEqual(await classifyPage(page), { status: 'birthday_confirmation', reason: 'birthday_confirmation_required' });
+  } finally {
+    await browser.close();
+  }
+});
+
+test('sanitized page diagnostics omit form values and record only control metadata', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(formMarkup());
+    await page.locator('input[type="password"]').fill('do-not-log-this-password');
+    const diagnostics = await collectPageDiagnostics(page, { urlChanges: ['signup', 'checkpoint'] });
+    const serialized = JSON.stringify(diagnostics);
+    assert.doesNotMatch(serialized, /do-not-log-this-password|mock\.user@example\.invalid/);
+    assert.deepEqual(diagnostics.urlChanges, ['signup', 'checkpoint']);
+    assert.equal(diagnostics.controls.inputTypeCounts.password, 1);
   } finally {
     await browser.close();
   }

@@ -29,6 +29,10 @@ export function createConfig(env = process.env) {
   if (!/^[a-z0-9]{1,24}$/i.test(usernamePrefix)) {
     throw new Error('INSTAGRAM_USERNAME_PREFIX must contain letters and digits and leave room for a numeric suffix.');
   }
+  const excludedUsernames = String(env.INSTAGRAM_EXCLUDED_USERNAMES ?? '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
+  if (excludedUsernames.some((value) => !/^[a-z0-9._]{1,30}$/.test(value))) {
+    throw new Error('INSTAGRAM_EXCLUDED_USERNAMES contains an invalid username.');
+  }
   if (!Number.isInteger(maxPollAttempts) || maxPollAttempts < 1 || maxPollAttempts > 30) {
     throw new Error('MAIL_POLL_MAX_ATTEMPTS must be an integer from 1 to 30.');
   }
@@ -42,6 +46,7 @@ export function createConfig(env = process.env) {
     fullName,
     dateOfBirth,
     usernamePrefix,
+    excludedUsernames: Object.freeze([...new Set(excludedUsernames)]),
     encryptionKey: env.ACCOUNT_ENCRYPTION_KEY ?? null,
     signupUrl: INSTAGRAM_SIGNUP_URL,
     mailPollMaxAttempts: maxPollAttempts,

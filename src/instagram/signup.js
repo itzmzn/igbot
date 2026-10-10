@@ -1,4 +1,5 @@
 import { classifyPage } from './verification.js';
+import { authenticatedSessionVisible } from './login.js';
 
 export class SignupSelectorError extends Error {
   constructor(message, diagnostics) {
@@ -37,6 +38,10 @@ async function resolveUnique(page, field, candidates, diagnostics) {
   for (const locator of candidates) {
     const count = await locator.count().catch(() => 0);
     if (count === 1 && await locator.isVisible().catch(() => false)) {
+      if (!await locator.isEnabled().catch(() => false)) {
+        diagnostics.push({ field, found: true, matchCount: 1, enabled: false });
+        throw new SignupSelectorError(`The visible ${field} field is disabled; refusing to submit.`, diagnostics);
+      }
       diagnostics.push({ field, found: true, matchCount: 1 });
       return locator;
     }
@@ -144,11 +149,6 @@ async function birthdayControlsPresent(page) {
   return dateInputCount === 1 || selectCount >= 3;
 }
 
-async function isBirthdayStep(page) {
-  const text = await page.locator('body').innerText({ timeout: 2000 }).catch(() => '');
-  return /birth|birthday|date of birth/i.test(text) && await birthdayControlsPresent(page);
-}
-
 async function resolveBirthdayContinueButton(page, diagnostics) {
   const candidate = page.getByRole('button', { name: /^(next|continue|confirm)$/i });
   const count = await candidate.count().catch(() => 0);
@@ -189,7 +189,7 @@ async function waitForSignupForm(page, timeoutMs = 15_000) {
   let diagnostics = [];
   while (Date.now() <= deadline) {
     const state = await classifyPage(page);
-    if (state.status === 'challenge' || state.status === 'rejected') return state;
+    if (state.status !== 'unknown') return state;
     diagnostics = [];
     let allReady = true;
     for (const field of fields) {
@@ -212,7 +212,7 @@ async function waitForSignupForm(page, timeoutMs = 15_000) {
   throw new SignupSelectorError('Signup form fields did not become visible before the bounded page-detection timeout.', diagnostics);
 }
 
-export async function runSignup(page, { email, fullName, username, usernameCandidates, password, dateOfBirth, url, authorized = false, navigate = true, waitMs = 5000, usernameCheckWaitMs = 900, onSubmitted, onUsernameSelected }) {
+export async function runSignup(page, { email, fullName, username, usernameCandidates, password, dateOfBirth, url, authorized = false, navigate = true, waitMs = 10_000, usernameCheckWaitMs = 900, onSubmitted, onUsernameSelected, hasUnexpectedDialogs }) {
   if (authorized !== true) throw new Error('Signup submission requires explicit authorization.');
   if (navigate) {
     if (url !== 'https://www.instagram.com/accounts/emailsignup/' && !url?.startsWith('http://127.0.0.1:')) {
@@ -222,8 +222,7 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
   }
   await page.locator('body').waitFor({ state: 'visible', timeout: 15_000 });
   const before = await classifyPage(page);
-  if (before.status === 'challenge') return { ...before, submitAttempted: false, diagnostics: [] };
-  if (before.status === 'rejected') return { ...before, submitAttempted: false, diagnostics: [] };
+  if (before.status !== 'unknown') return { ...before, submitAttempted: false, diagnostics: [] };
 
   const pendingState = await waitForSignupForm(page);
   if (pendingState) return { ...pendingState, submitAttempted: false, diagnostics: [] };
@@ -245,7 +244,13 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
   let submit = null;
   for (const candidate of submitCandidates) {
     const count = await candidate.count().catch(() => 0);
-    if (count === 1 && await candidate.isVisible().catch(() => false)) { submit = candidate; break; }
+    if (count === 1 && await candidate.isVisible().catch(() => false)) {
+      if (!await candidate.isEnabled().catch(() => false)) {
+        throw new SignupSelectorError('The signup submit control is disabled; refusing to submit.', diagnostics);
+      }
+      submit = candidate;
+      break;
+    }
     if (count > 1) throw new SignupSelectorError('Signup submit button is ambiguous; refusing to submit.', diagnostics);
   }
   if (!submit) throw new SignupSelectorError('Could not identify one visible signup submit button.', diagnostics);
@@ -270,8 +275,7 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
   if (!selectedUsername) throw new SignupSelectorError('Instagram marked all bounded username candidates unavailable before submission.', diagnostics);
 
   const currentBeforeMailbox = await classifyPage(page);
-  if (currentBeforeMailbox.status === 'challenge') return { ...currentBeforeMailbox, username: selectedUsername, submitAttempted: false, diagnostics };
-  if (currentBeforeMailbox.status === 'rejected') return { ...currentBeforeMailbox, username: selectedUsername, submitAttempted: false, diagnostics };
+  if (currentBeforeMailbox.status !== 'unknown') return { ...currentBeforeMailbox, username: selectedUsername, submitAttempted: false, diagnostics };
 
   let resolvedEmail = email;
   if (typeof onUsernameSelected === 'function') {
@@ -291,25 +295,39 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
   }
 
   const current = await classifyPage(page);
-  if (current.status === 'challenge') return { ...current, submitAttempted: false, diagnostics };
-  if (current.status === 'rejected') return { ...current, username: selectedUsername, submitAttempted: false, diagnostics };
-  await submit.click();
+  if (current.status !== 'unknown') return { ...current, username: selectedUsername, submitAttempted: false, diagnostics };
+  if (typeof hasUnexpectedDialogs === 'function' && hasUnexpectedDialogs()) {
+    return { status: 'unknown', reason: 'unexpected_dialog', username: selectedUsername, submitAttempted: false, diagnostics };
+  }
   const submittedAt = new Date().toISOString();
   if (typeof onSubmitted === 'function') onSubmitted(submittedAt);
+  await submit.click();
 
   const deadline = Date.now() + waitMs;
-  let result = await classifyPage(page);
-  while (result.status === 'unknown' && Date.now() < deadline) {
-    if (!birthdayFilled && await isBirthdayStep(page)) {
+  const classifyPostSubmit = async () => {
+    const state = await classifyPage(page);
+    if (state.status === 'unknown' && await authenticatedSessionVisible(page, selectedUsername)) {
+      return { status: 'confirmed', reason: 'authenticated_signup_landing' };
+    }
+    return state;
+  };
+  let result = await classifyPostSubmit();
+  while (Date.now() < deadline) {
+    if (typeof hasUnexpectedDialogs === 'function' && hasUnexpectedDialogs()) {
+      result = { status: 'unknown', reason: 'unexpected_dialog' };
+      break;
+    }
+    if (result.status === 'birthday_confirmation' && !birthdayFilled) {
       await fillBirthday(page, dateOfBirth, diagnostics);
       birthdayFilled = true;
       const continueButton = await resolveBirthdayContinueButton(page, diagnostics);
       await continueButton.click();
-      result = await classifyPage(page);
+      result = await classifyPostSubmit();
       continue;
     }
+    if (result.status !== 'unknown') break;
     await page.waitForTimeout(250);
-    result = await classifyPage(page);
+    result = await classifyPostSubmit();
   }
   return { ...result, username: selectedUsername, submitAttempted: true, submittedAt, diagnostics };
 }

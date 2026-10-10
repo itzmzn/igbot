@@ -105,7 +105,9 @@ gh run watch --repo itzmzn/igbot
 
 Do not dispatch this workflow for a mock test. A run without both authorization inputs and all three secrets fails before dependency installation, mailbox creation, or Instagram navigation. Never use a generated or guessed identity for a real registration.
 
-The workflow is non-interactive. If Instagram requires email, phone, CAPTCHA, or another human check, it stops and reports that status. It does not bypass the check. Download the run's `igbot-account-*` artifact. When Instagram confirms success, it contains JSON metadata and an encrypted `.enc` credential file. For an unconfirmed submission, it contains only the encrypted `.enc` file. Keep the artifact private because people with repository read access may be able to download it. Do not publish decrypted credentials.
+The workflow is non-interactive. If Instagram requires email, phone, CAPTCHA, or another human check, it stops and reports that status. It does not bypass the check. A success state requires both Instagram's signup confirmation and a fresh-context login that exposes the account's profile and inbox controls. It never saves browser cookies or storage state. Unknown outcomes produce a separate sanitized JSON diagnostic artifact with only state codes, coarse route changes, control counts, network failure hosts, and dialog types; real-run screenshots and traces are not uploaded.
+
+Download the run's `igbot-account-*` artifact promptly and store it in a private location. When both signup and login are confirmed, it contains JSON metadata and an encrypted `.enc` credential file. For a pending or unknown outcome, it contains only the encrypted `.enc` file. Account artifacts are retained for up to 90 days; keep your own private copy for long-term access. People with repository read access may be able to download artifacts, so never upload a decryption key or decrypted credential file.
 
 Decrypt the artifact locally only when needed, using the key file you retained above:
 
@@ -130,7 +132,7 @@ Open **Actions → Assisted Instagram registration → Run workflow**. Set `auth
 ## Privacy and limits
 
 - GitHub Actions artifacts in this public repository may be downloadable by repository readers. Account credentials are AES-256-GCM encrypted before upload; the key is not stored in Git or the artifact. Metadata has no password, date of birth, Mail.tm password, token, OTP, or cookie.
-- The encrypted credential artifact is retained for two days by default. Download it promptly after a run that needs manual verification.
+- The encrypted credential artifact is retained for up to 90 days. Download it promptly after a run that needs manual verification and keep a private local recovery copy.
 - The encrypted credential bundle can contain the Instagram password and Mail.tm login credentials. It never contains message contents, browser cookies, or storage state.
 - The debug workflow operates only on local mock pages and uploads synthetic screenshots and traces.
 - Mail.tm availability, domain policy, API limits, and Instagram signup behavior are external dependencies and can change. A Mail.tm outage or Instagram security challenge ends the attempt; there are no repeated real signup submissions.
