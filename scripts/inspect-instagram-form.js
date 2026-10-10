@@ -44,7 +44,22 @@ async function main() {
       usernameLabel: await page.getByLabel(/username/i).count(),
       passwordLabel: await page.getByLabel(/password/i).count(),
       visibleTextInputs: await page.locator('input[type="text"]:visible').count(),
+      signupButtonRole: await page.getByRole('button', { name: /sign up|register|create account/i }).count(),
+      submitButtons: await page.locator('button[type="submit"]').count(),
+      roleButtons: await page.locator('[role="button"]').count(),
     };
+    const buttons = await page.locator('button, [role="button"], input[type="submit"]').evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        tag: element.tagName.toLowerCase(),
+        role: element.getAttribute('role') ?? '',
+        type: element.getAttribute('type') ?? '',
+        ariaLabel: element.getAttribute('aria-label') ?? '',
+        text: (element.innerText ?? element.value ?? '').trim().replace(/\s+/g, ' ').slice(0, 100),
+        disabled: Boolean(element.disabled),
+        visible: rect.width > 0 && rect.height > 0,
+      };
+    }));
     emit('instagram_form_diagnostic', {
       pageState,
       urlHost: new URL(page.url()).hostname,
@@ -52,6 +67,8 @@ async function main() {
       selectCount: await page.locator('select').count(),
       selectors,
       playwrightLocatorCounts,
+      formCount: await page.locator('form').count(),
+      buttons,
     });
     if (pageState.status === 'challenge') process.exitCode = 2;
   } finally {
