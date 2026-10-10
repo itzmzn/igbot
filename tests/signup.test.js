@@ -470,15 +470,17 @@ test('sanitized page diagnostics omit form values and record only control metada
 
 test('diagnostic text redacts configured identity, contact data, OTPs, and credentials', () => {
   const sanitized = sanitizeDiagnosticText(
-    'Dasun Priyanath, dasun@example.test, +1 (555) 222-3333, code 123456, Bearer abc.def, eyJabcdefgh123.abcdefgh123.abcdefgh123 and password-very-secret-value',
+    'Dasun Priyanath, dasun@example.test, +1 (555) 222-3333, code 123456, Bearer abc.def, eyJabcdefgh123.abcdefgh123.abcdefgh123, password-very-secret-value, https://instagram.com/user/?token=url-secret, sessionid=private-cookie-value',
     ['Dasun Priyanath', 'password-very-secret-value'],
   );
-  assert.doesNotMatch(sanitized, /Dasun Priyanath|dasun@example\.test|555|222-3333|123456|abc\.def|eyJabcdefgh123|password-very-secret-value/);
+  assert.doesNotMatch(sanitized, /Dasun Priyanath|dasun@example\.test|555|222-3333|123456|abc\.def|eyJabcdefgh123|password-very-secret-value|instagram\.com\/user|url-secret|private-cookie-value/);
   assert.match(sanitized, /\[REDACTED_EMAIL\]/);
   assert.match(sanitized, /\[REDACTED_PHONE\]/);
   assert.match(sanitized, /\[REDACTED_CODE\]/);
   assert.match(sanitized, /Bearer \[REDACTED\]/);
   assert.match(sanitized, /\[REDACTED_TOKEN\]/);
+  assert.match(sanitized, /\[REDACTED_URL\]/);
+  assert.match(sanitized, /\[REDACTED_COOKIE\]/);
 });
 
 test('page diagnostics retain sanitized alert, live status, and associated inline field errors', async () => {
