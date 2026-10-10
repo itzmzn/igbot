@@ -157,22 +157,60 @@ export class MailTmClient {
           diagnostics: { durationMs: Math.max(0, this.now() - startedAt) },
         });
       }
-      const timeoutSignal = AbortSignal.timeout(Math.max(1, Math.floor(remainingMs)));
-      const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+      const timeoutController = new AbortController();
+      const requestTimeoutMs = Math.max(1, Math.floor(remainingMs));
+      let timeoutId;
+      let abortHandler;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          const timeoutError = new DOMException('The Mail.tm request timed out.', 'TimeoutError');
+          timeoutController.abort(timeoutError);
+          reject(timeoutError);
+        }, requestTimeoutMs);
+      });
+      const cancellationPromise = signal ? new Promise((_, reject) => {
+        abortHandler = () => reject(new DOMException('The Mail.tm request was cancelled.', 'AbortError'));
+        if (signal.aborted) abortHandler();
+        else signal.addEventListener('abort', abortHandler, { once: true });
+      }) : null;
+      const cleanupRequestTimers = () => {
+        clearTimeout(timeoutId);
+        if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
+      };
       let response;
+      let data;
       try {
-        response = await this.fetch(url, {
-          method,
-          headers: {
-            accept: 'application/ld+json, application/json',
-            ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-            ...(token ? { authorization: `Bearer ${token}` } : {}),
-          },
-          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-          signal: requestSignal,
-        });
+        const requestSignal = signal ? AbortSignal.any([signal, timeoutController.signal]) : timeoutController.signal;
+        const requestPromise = (async () => {
+          const fetched = await this.fetch(url, {
+            method,
+            headers: {
+              accept: 'application/ld+json, application/json',
+              ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+              ...(token ? { authorization: `Bearer ${token}` } : {}),
+            },
+            ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+            signal: requestSignal,
+          });
+          return { response: fetched, data: fetched.ok ? await this.readJson(fetched, operation) : undefined };
+        })();
+        const raced = await Promise.race(cancellationPromise
+          ? [requestPromise, timeoutPromise, cancellationPromise]
+          : [requestPromise, timeoutPromise]);
+        response = raced.response;
+        data = raced.data;
       } catch (error) {
-        const kind = classifyNetworkError(error, timeoutSignal.aborted);
+        cleanupRequestTimers();
+        if (error instanceof MailTmError) {
+          error.diagnostics = {
+            ...(error.diagnostics ?? {}),
+            httpStatus: error.status,
+            contentType: error.diagnostics?.contentType ?? 'unknown',
+            durationMs: Math.max(0, this.now() - startedAt),
+          };
+          throw error;
+        }
+        const kind = classifyNetworkError(error, timeoutController.signal.aborted);
         if (signal?.aborted) throw new MailTmError(operation, 'request was cancelled', null, { kind: 'cancelled' });
         if (deadline !== undefined && this.now() >= deadline) {
           throw new MailTmError(operation, 'the overall request deadline was reached', null, {
@@ -189,6 +227,8 @@ export class MailTmClient {
           kind,
           diagnostics: { networkClass: kind, durationMs: Math.max(0, this.now() - startedAt) },
         });
+      } finally {
+        cleanupRequestTimers();
       }
 
       const contentType = contentTypeOf(response);
@@ -198,20 +238,7 @@ export class MailTmClient {
         durationMs: Math.max(0, this.now() - startedAt),
       };
       if (response.ok) {
-        let data;
-        try {
-          data = await this.readJson(response, operation);
-        } catch (error) {
-          if (error instanceof MailTmError) {
-            error.diagnostics = {
-              ...(error.diagnostics ?? {}),
-              httpStatus: response.status,
-              contentType,
-              durationMs: Math.max(0, this.now() - startedAt),
-            };
-          }
-          throw error;
-        }
+        if (data === undefined && response.status !== 204) throw new MailTmError(operation, 'the API response body was empty', response.status, { kind: 'malformed_json', diagnostics: lastHttpDiagnostics });
         return metadata ? { data, ...lastHttpDiagnostics } : data;
       }
 
