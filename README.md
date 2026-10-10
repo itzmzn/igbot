@@ -1,6 +1,6 @@
 # igbot
 
-A single-account Instagram registration assistant built with Node.js 22, Playwright, Chromium, Mail.tm, Node.js crypto, and GitHub Actions.
+A single-account Instagram registration assistant built with Node.js 22, Playwright, Chromium, [Mail.tm](https://mail.tm), Node.js crypto, and GitHub Actions.
 
 The automated signup flow is disabled unless one manually dispatched workflow run includes an explicit authorization phrase and the repository has the registrant's truthful full name, truthful date of birth, and an encryption key configured as GitHub Actions secrets. Automated tests use only a local mock signup page. The project does not solve CAPTCHAs, evade rate limits, retry a real signup submission, or enter verification codes.
 

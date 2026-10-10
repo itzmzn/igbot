@@ -41,6 +41,8 @@ test('account metadata has the expected safe schema and validates as JSON', () =
   });
   assert.equal(validateAccountMetadata(JSON.parse(JSON.stringify(metadata))), true);
   assert.equal(validateAccountMetadata({ ...metadata, credentialsFile: 'wrong.enc' }), false);
+  assert.equal(validateAccountMetadata({ ...metadata, username: '..' }), false);
+  assert.throws(() => createAccountMetadata({ username: '..', email: 'a@example.test', status: 'confirmed' }), /username/i);
 });
 
 test('saveAccount writes metadata and encrypted credentials only, with no plaintext secret', async () => {
@@ -69,6 +71,7 @@ test('saveAccount writes metadata and encrypted credentials only, with no plaint
     await assert.rejects(saveAccount({
       username: 'igmockuser', email: 'igmockuser@mail.example', status: 'confirmed', credentials, encryptionKey: key, directory,
     }), /already exists/i);
+    assert.equal(JSON.parse(await readFile(saved.metadataPath, 'utf8')).status, 'confirmed');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

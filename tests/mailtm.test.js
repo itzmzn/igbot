@@ -36,6 +36,22 @@ test('Mail.tm discovers domains, creates a mailbox, authenticates, polls, and re
   assert.equal(calls[0].options.headers.authorization, undefined);
 });
 
+
+test('domain discovery falls back to the bare collection when the paged response is empty', async () => {
+  const urls = [];
+  const client = new MailTmClient({
+    fetchImpl: async (url) => {
+      urls.push(url);
+      if (url.endsWith('/domains?page=1')) return jsonResponse({ 'hydra:member': [], 'hydra:totalItems': 0 });
+      return jsonResponse({ 'hydra:member': [{ domain: 'fallback.test', isActive: true, isPrivate: false }] });
+    },
+    retries: 0,
+  });
+  assert.deepEqual(await client.discoverDomains(), ['fallback.test']);
+  assert.equal(urls.length, 2);
+  assert.ok(urls[1].endsWith('/domains'));
+});
+
 test('Mail.tm retries transient responses a bounded number of times and does not expose response bodies', async () => {
   let calls = 0;
   const secret = 'never-log-this-token';

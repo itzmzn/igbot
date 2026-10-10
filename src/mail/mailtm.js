@@ -63,11 +63,33 @@ export class MailTmClient {
   }
 
   async discoverDomains() {
-    const data = await this.request('domain discovery', '/domains?page=1');
-    const members = Array.isArray(data?.['hydra:member']) ? data['hydra:member'] : [];
-    return members
+    const firstPage = await this.request('domain discovery', '/domains?page=1');
+    const firstMembers = Array.isArray(firstPage?.['hydra:member']) ? firstPage['hydra:member'] : [];
+    const totalItems = Number(firstPage?.['hydra:totalItems']);
+    const pages = Number.isFinite(totalItems) && totalItems > 0
+      ? Math.max(1, Math.min(5, Math.ceil(totalItems / 30)))
+      : 1;
+    const entries = [...firstMembers];
+    for (let page = 2; page <= pages; page += 1) {
+      const data = await this.request('domain discovery', `/domains?page=${page}`);
+      const members = Array.isArray(data?.['hydra:member']) ? data['hydra:member'] : [];
+      entries.push(...members);
+      if (members.length === 0) break;
+    }
+
+    let domains = entries
       .filter((entry) => entry && typeof entry.domain === 'string' && entry.isActive !== false && entry.isPrivate !== true)
       .map((entry) => entry.domain.toLowerCase());
+
+    // Some Mail.tm-compatible responses ignore the optional page query; retry the documented bare collection once if empty.
+    if (domains.length === 0) {
+      const fallback = await this.request('domain discovery', '/domains');
+      const members = Array.isArray(fallback?.['hydra:member']) ? fallback['hydra:member'] : [];
+      domains = members
+        .filter((entry) => entry && typeof entry.domain === 'string' && entry.isActive !== false && entry.isPrivate !== true)
+        .map((entry) => entry.domain.toLowerCase());
+    }
+    return [...new Set(domains)];
   }
 
   async createMailbox({ username, password }) {

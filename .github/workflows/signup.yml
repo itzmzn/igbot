@@ -48,14 +48,12 @@ jobs:
             exit 1
           fi
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-      - name: Resolve dependency lock on the hosted runner
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Install Node.js dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install Chromium and runner dependencies
@@ -68,7 +66,7 @@ jobs:
         run: node src/index.js
       - name: Preserve encrypted account files
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: igbot-account-${{ github.run_id }}
           path: accounts/

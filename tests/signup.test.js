@@ -126,3 +126,24 @@ test('CAPTCHA is reported as a challenge and the form is not submitted', async (
     await browser.close();
   }
 });
+
+
+test('page-state detection distinguishes verification and security challenges', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    const cases = [
+      ['Please wait a few minutes before trying again.', { status: 'challenge', reason: 'rate_limited' }],
+      ['We detected unusual activity. Confirm it is you.', { status: 'challenge', reason: 'suspicious_activity' }],
+      ['Confirm your phone number to continue.', { status: 'challenge', reason: 'phone_verification' }],
+      ['Check your email for the confirmation code.', { status: 'verification_required', reason: 'email_verification' }],
+      ['A page with no known completion or challenge copy.', { status: 'unknown', reason: 'no_known_terminal_state' }],
+    ];
+    for (const [copy, expected] of cases) {
+      await page.setContent(`<html><body><main>${copy}</main></body></html>`);
+      assert.deepEqual(await classifyPage(page), expected);
+    }
+  } finally {
+    await browser.close();
+  }
+});

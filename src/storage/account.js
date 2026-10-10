@@ -55,7 +55,7 @@ export function decryptCredentials(encryptedText, encodedKey) {
 }
 
 export function createAccountMetadata({ username, email, status, createdAt = new Date().toISOString() }) {
-  if (!/^[a-z0-9._]{1,30}$/i.test(username ?? '')) throw new TypeError('Username has an invalid format.');
+  if (!/^(?!\.)(?!.*\.\.)(?!.*\.$)[a-z0-9._]{1,30}$/i.test(username ?? '')) throw new TypeError('Username has an invalid format.');
   if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new TypeError('Email has an invalid format.');
   if (!ALLOWED_STATUSES.has(status)) throw new TypeError('Account status is not supported.');
   if (!Number.isFinite(Date.parse(createdAt))) throw new TypeError('createdAt must be an ISO-compatible timestamp.');
@@ -72,7 +72,7 @@ export function createAccountMetadata({ username, email, status, createdAt = new
 
 export function validateAccountMetadata(metadata) {
   if (!metadata || metadata.platform !== 'instagram') return false;
-  if (!/^[a-z0-9._]{1,30}$/i.test(metadata.username ?? '')) return false;
+  if (!/^(?!\.)(?!.*\.\.)(?!.*\.$)[a-z0-9._]{1,30}$/i.test(metadata.username ?? '')) return false;
   if (typeof metadata.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(metadata.email)) return false;
   if (!ALLOWED_STATUSES.has(metadata.status)) return false;
   if (!Number.isFinite(Date.parse(metadata.createdAt))) return false;
@@ -87,16 +87,18 @@ export async function saveAccount({ username, email, status, credentials, encryp
   const metadataPath = path.join(directory, `${username}.json`);
   const credentialPath = path.join(directory, `${username}.enc`);
   let credentialCreated = false;
+  let metadataCreated = false;
   try {
     const credentialHandle = await open(credentialPath, 'wx', 0o600);
     credentialCreated = true;
     try { await credentialHandle.writeFile(encryptedText, 'utf8'); } finally { await credentialHandle.close(); }
     const metadataHandle = await open(metadataPath, 'wx', 0o600);
+    metadataCreated = true;
     try { await metadataHandle.writeFile(`${JSON.stringify(metadata, null, 2)}\n`, 'utf8'); } finally { await metadataHandle.close(); }
     return { metadata, metadataPath, credentialPath };
   } catch (error) {
     if (credentialCreated) await unlink(credentialPath).catch(() => {});
-    await unlink(metadataPath).catch(() => {});
+    if (metadataCreated) await unlink(metadataPath).catch(() => {});
     throw new Error(`Secure account persistence failed: ${error.code === 'EEXIST' ? 'an account file already exists for this username' : 'a protected file could not be written'}`);
   }
 }
