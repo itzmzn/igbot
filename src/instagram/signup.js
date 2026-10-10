@@ -305,7 +305,7 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
 
   const deadline = Date.now() + waitMs;
   const classifyPostSubmit = async () => {
-    const state = await classifyPage(page);
+    const state = await classifyPage(page, { afterSubmit: true });
     if (state.status === 'unknown' && await authenticatedSessionVisible(page, selectedUsername)) {
       return { status: 'confirmed', reason: 'authenticated_signup_landing' };
     }

@@ -9,6 +9,7 @@ const EMAIL_VERIFICATION = /confirm your email|verify your email|check your emai
 const ADDITIONAL_SECURITY_CHECK = /two[- ]factor|authentication code|security challenge|confirm your identity|verify your identity|enter (?:the )?(?:\d{1,2}[- ]digit )?security code/i;
 const SUCCESS = /welcome to instagram|your account has been created|account created successfully|thanks for signing up/i;
 const USERNAME_UNAVAILABLE = /(?:this\s+)?username\s+(?:is\s+)?(?:not available|unavailable|isn't available|is not available|already taken|has already been taken)|username.{0,40}(?:already taken|unavailable)|(?:not available|already taken).{0,40}username/i;
+const USERNAME_AVAILABLE = /(?:this\s+)?username\s+(?:is\s+)?available\b/i;
 const EMAIL_REGISTERED = /(?:email address|email).{0,60}(?:already (?:registered|exists|in use|taken)|is already associated)|(?:already registered|account already exists).{0,60}(?:email|address)/i;
 const BIRTHDAY_PROMPT = /(?:add|enter|confirm|select) (?:your )?(?:birthday|date of birth)|(?:what|when) (?:is|was) your (?:birthday|date of birth)/i;
 
@@ -40,7 +41,7 @@ async function hasBirthdayControls(page) {
   return dateInputs === 1 || selects >= 3;
 }
 
-export async function classifyPage(page) {
+export async function classifyPage(page, { afterSubmit = false } = {}) {
   const visibleText = (await visibleBodyText(page)).slice(0, 30_000);
   const alertText = await visibleAlertText(page);
   const combined = `${visibleText}\n${alertText}`;
@@ -56,13 +57,14 @@ export async function classifyPage(page) {
   }
   if (EMAIL_REGISTERED.test(combined)) return { status: 'rejected', reason: 'email_already_registered' };
   if (USERNAME_UNAVAILABLE.test(combined)) return { status: 'rejected', reason: 'username_unavailable' };
+  if (USERNAME_AVAILABLE.test(combined)) return { status: 'unknown', reason: 'username_available' };
   if (BIRTHDAY_PROMPT.test(visibleText) && await hasBirthdayControls(page)) {
     return { status: 'birthday_confirmation', reason: 'birthday_confirmation_required' };
   }
   if (SUCCESS.test(combined)) return { status: 'confirmed', reason: 'success_message' };
 
   const reason = validationReason(combined);
-  if (reason !== 'form_validation' || alertText.trim().length > 0) {
+  if (reason !== 'form_validation' || (afterSubmit && alertText.trim().length > 0)) {
     return { status: 'validation_error', reason };
   }
   return { status: 'unknown', reason: 'no_known_terminal_state' };
@@ -83,8 +85,8 @@ export function safeInstagramRoute(url) {
   }
 }
 
-export async function collectPageDiagnostics(page, { urlChanges = [] } = {}) {
-  const state = await classifyPage(page);
+export async function collectPageDiagnostics(page, { urlChanges = [], afterSubmit = false } = {}) {
+  const state = await classifyPage(page, { afterSubmit });
   const controls = await page.locator('body').evaluate((body) => {
     const visible = (element) => {
       const rect = element.getBoundingClientRect();

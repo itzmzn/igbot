@@ -465,3 +465,17 @@ test('sanitized page diagnostics omit form values and record only control metada
     await browser.close();
   }
 });
+
+test('informational username feedback is not mistaken for a form error before submission', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<html><body><div role="alert">This username is available.</div></body></html>');
+    assert.deepEqual(await classifyPage(page), { status: 'unknown', reason: 'username_available' });
+    await page.setContent('<html><body><div role="alert">Please review this form.</div></body></html>');
+    assert.deepEqual(await classifyPage(page), { status: 'unknown', reason: 'no_known_terminal_state' });
+    assert.deepEqual(await classifyPage(page, { afterSubmit: true }), { status: 'validation_error', reason: 'form_validation' });
+  } finally {
+    await browser.close();
+  }
+});

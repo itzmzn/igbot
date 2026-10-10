@@ -38,7 +38,7 @@ function safeNetworkDiagnostics(page) {
 }
 
 async function saveSanitizedDiagnostics({ phase, page, events, result }) {
-  const pageDiagnostics = await collectPageDiagnostics(page, { urlChanges: events.urlChanges });
+  const pageDiagnostics = await collectPageDiagnostics(page, { urlChanges: events.urlChanges, afterSubmit: result?.submitAttempted === true });
   const report = {
     schemaVersion: 1,
     phase,
@@ -195,9 +195,11 @@ async function runReal(config) {
       } else {
         emit('registration_unconfirmed', { status: 'registration_unconfirmed', username, reason: result.reason });
       }
-      if (submitAttempted) {
+      if (page && pageEvents) {
         const diagnosticPath = await saveSanitizedDiagnostics({ phase: 'signup', page, events: pageEvents, result });
         emit('sanitized_diagnostics_saved', { path: diagnosticPath });
+      }
+      if (submitAttempted) {
         const stored = await persistEncryptedCredentials();
         if (stored) emit('encrypted_credentials_saved', { path: path.relative(process.cwd(), stored.credentialPath) });
       }

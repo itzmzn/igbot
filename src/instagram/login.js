@@ -107,7 +107,7 @@ export async function runLogin(page, {
 
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
-    const state = await classifyPage(page);
+    const state = await classifyPage(page, { afterSubmit: true });
     if (state.status === 'challenge' || state.status === 'verification_required' || state.status === 'rejected' || state.status === 'validation_error') {
       return { ...state, submitAttempted: true, submittedAt };
     }
