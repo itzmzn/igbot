@@ -125,7 +125,7 @@ async function runReal(config) {
         username,
         password,
         email: mailbox.address,
-        mailboxPassword,
+        mailboxPassword: mailbox.password,
         ...(verificationMessage ? { verificationMessage } : {}),
       },
       directory: path.resolve('accounts'),

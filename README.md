@@ -7,7 +7,7 @@ The automated signup flow is disabled unless one manually dispatched workflow ru
 ## What it does
 
 - Generates one cryptographically random username and a 24-character password per authorized run.
-- Discovers a public Mail.tm domain, creates a temporary mailbox, authenticates, and polls its inbox with bounded retries.
+- Discovers only explicitly active, non-private Mail.tm domains; creates a temporary mailbox, authenticates, and polls all inbox pages with bounded retries.
 - Uses Playwright locators with visible-element checks and selector diagnostics before entering signup details.
 - Supports a date input and accessible month/day/year dropdowns for date of birth.
 - Stops on CAPTCHA, rate limiting, phone checks, suspicious-activity warnings, email verification, or an unknown page state.
@@ -58,6 +58,36 @@ gh run watch --repo itzmzn/igbot
 ```
 
 Debug screenshots and traces contain only synthetic mock form values. They do not contain a real browser session. A failed test's assertion and stack are available in the Actions run log; the uploaded JSON summaries contain sanitized categories and selector presence/counts only.
+
+## Mail.tm integration and diagnostics
+
+Mail.tm does not require an API key. The client uses the official `https://api.mail.tm` API, reads the documented Hydra collection (`hydra:member`, `hydra:totalItems`, and `hydra:view`), and follows its 30-item pagination. A domain is eligible only when `isActive` is `true` and `isPrivate` is `false`; the project does not guess or hardcode domains, fall back to a different response shape, or convert a malformed response into an empty list. The diagnostic distinguishes an empty list from domains that exist but are inactive/private.
+
+The client creates a mailbox with `POST /accounts`, obtains its bearer token with `POST /token`, validates it through `GET /me`, and reads `GET /messages` and individual `GET /messages/{id}` resources. Inbox polling has configurable intervals, an overall timeout, cancellation support, and paginated retrieval. Message timestamps and sender metadata remain available to callers. The assistant never extracts or submits an Instagram verification code.
+
+Requests use a timeout and stay at or below the documented eight requests per second per client/IP. Safe reads and token requests use bounded exponential backoff; HTTP 429 honors `Retry-After` and waits at least one second, while 401/403 authentication failures and 422 payload validation failures are reported without retry. `POST /accounts` is sent once because a network/server failure can occur after the API creates the account, and repeating it could create duplicates; an ambiguous response is reported as an unknown creation outcome. Timeouts, DNS, TLS, HTTP, malformed JSON, unexpected schemas, and pagination failures have separate error categories. Error messages and the diagnostic output omit request bodies, passwords, bearer tokens, and mailbox addresses.
+
+From Termux, run the read-only live diagnostic on GitHub-hosted Ubuntu. It reports HTTP status, content type, response schema keys, domain counts, pagination, request duration, and a sanitized failure reason. It creates no mailbox:
+
+```bash
+gh workflow run mailtm.yml --repo itzmzn/igbot --ref main \
+  -f mode=diagnostic -f authorize_mailbox_test=false
+gh run list --repo itzmzn/igbot --workflow mailtm.yml --limit 5
+gh run watch --repo itzmzn/igbot
+```
+
+The separately authorized Mail.tm integration mode creates at most one random test mailbox, checks account creation, token authentication, `/me`, and the initially empty inbox, then attempts to delete that test mailbox in a `finally` cleanup. Run it only after a diagnostic finds an active public domain, and only when you accept the permanent-deletion risk:
+
+```bash
+gh workflow run mailtm.yml --repo itzmzn/igbot --ref main \
+  -f mode=mailbox-test \
+  -f authorize_mailbox_test=true \
+  -f confirmation='AUTHORIZE ONE MAILTM TEST MAILBOX'
+gh run list --repo itzmzn/igbot --workflow mailtm.yml --limit 5
+gh run watch --repo itzmzn/igbot
+```
+
+The live mailbox test does not send synthetic email and does not contact Instagram. Synthetic message reception, pagination, sender/timestamp handling, and message retrieval are covered by mocked tests. If a live mailbox test is interrupted or cleanup fails, the test mailbox may remain accessible until Mail.tm removes it; the workflow does not print its address or password, so retain no expectation that it can be recovered from logs. A Mail.tm account deleted through its API cannot be restored. Mail.tm documents an eight-query-per-second limit and asks API users to link to Mail.tm; this README provides that attribution. See the [Mail.tm API documentation](https://docs.mail.tm/), [domain reference](https://docs.mail.tm/api/domains), [account reference](https://docs.mail.tm/api/accounts), [authentication guide](https://docs.mail.tm/getting-started/authentication), [messages reference](https://docs.mail.tm/api/messages), and [error handling guide](https://docs.mail.tm/getting-started/error-handling).
 
 ## One real assisted registration
 

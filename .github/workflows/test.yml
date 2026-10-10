@@ -25,9 +25,6 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install Chromium and runner dependencies
         run: npx playwright install --with-deps chromium
-      - name: Check Mail.tm domain discovery without creating a mailbox
-        id: mailtm-smoke
-        run: node scripts/check-mailtm.js
       - name: Run unit and mock browser tests
         env:
           DEBUG_ARTIFACTS: '1'

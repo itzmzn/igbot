@@ -1,0 +1,47 @@
+name: Mail.tm live API check
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Read-only API diagnostic, or one explicitly authorized temporary mailbox test
+        type: choice
+        required: true
+        default: diagnostic
+        options:
+          - diagnostic
+          - mailbox-test
+      authorize_mailbox_test:
+        description: Required only for one Mail.tm account creation and cleanup test
+        type: boolean
+        required: true
+        default: false
+      confirmation:
+        description: Enter AUTHORIZE ONE MAILTM TEST MAILBOX for mailbox-test mode
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mailtm-live-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  mailtm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      MAILTM_MODE: ${{ inputs.mode }}
+      MAILTM_MAILBOX_AUTHORIZED: ${{ inputs.authorize_mailbox_test }}
+      MAILTM_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Run Mail.tm diagnostic or authorized one-mailbox test
+        run: node scripts/check-mailtm.js
