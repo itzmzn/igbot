@@ -82,17 +82,19 @@ async function runReal(config) {
     ...(submittedAt ? { submittedAt } : {}),
   });
   try {
-    mailbox = await mailboxClient.createMailbox({ username: `${username}mail`, password: mailPassword });
-    emit('mailbox_created', { status: 'ready' });
-
     const page = await browser.newPage();
     diagnostics = safeNetworkDiagnostics(page);
     result = await runSignup(page, {
-      email: mailbox.address,
+      email: '',
       fullName: config.fullName,
       username,
       usernameCandidates,
-      onUsernameSelected: (selected) => { username = selected; },
+      onUsernameSelected: async (selected) => {
+        username = selected;
+        mailbox = await mailboxClient.createMailbox({ username: `${selected}mail`, password: mailPassword });
+        emit('mailbox_created', { status: 'ready' });
+        return { email: mailbox.address };
+      },
       password,
       dateOfBirth: config.dateOfBirth,
       url: INSTAGRAM_SIGNUP_URL,

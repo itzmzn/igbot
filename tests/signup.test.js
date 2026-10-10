@@ -197,6 +197,7 @@ test('Playwright checks username availability and selects another candidate befo
         document.querySelector('form').addEventListener('submit', event => {
           event.preventDefault();
           window.signupSubmissionCount += 1;
+          window.submittedEmail = document.querySelector('[name="email"]').value;
           document.body.innerHTML = '<h1>Thanks for signing up</h1>';
         });
       </script>
@@ -210,12 +211,57 @@ test('Playwright checks username availability and selects another candidate befo
       navigate: false,
       waitMs: 3000,
       usernameCheckWaitMs: 10,
+      onUsernameSelected: async () => ({ email: 'generated-alias@example.invalid' }),
     });
     assert.equal(result.status, 'confirmed');
     assert.equal(result.username, 'dasunpriyanath000002');
     assert.equal(result.submitAttempted, true);
     assert.equal(await page.evaluate(() => window.signupSubmissionCount), 1);
+    assert.equal(await page.evaluate(() => window.submittedEmail), 'generated-alias@example.invalid');
     assert.ok(result.diagnostics.some((entry) => entry.field === 'usernameAvailability' && entry.candidateIndex === 1 && entry.status === 'unavailable'));
+  } finally {
+    await browser.close();
+  }
+});
+
+test('signup recognizes Instagram’s accessible Submit control and avoids creating a mailbox before selector checks', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<!doctype html><html><body>
+      <label>Mobile number or email<input type="text" name="email"></label>
+      <label>Full name<input name="fullName"></label>
+      <label>Username<input type="search" name="username"></label>
+      <label>Password<input type="password" name="password"></label>
+      <label>Date of birth<input type="date" name="birthday"></label>
+      <div role="button" aria-label="Submit">Submit</div>
+      <script>
+        window.submitCount = 0;
+        document.querySelector('[role="button"]').addEventListener('click', () => {
+          window.submitCount += 1;
+          document.body.innerHTML = '<h1>Thanks for signing up</h1>';
+        });
+      </script>
+    </body></html>`);
+    const result = await runSignup(page, {
+      ...mockRegistration,
+      authorized: true,
+      navigate: false,
+      usernameCheckWaitMs: 0,
+    });
+    assert.equal(result.status, 'confirmed');
+    assert.equal(await page.evaluate(() => window.submitCount), 1);
+
+    await page.setContent(formMarkup().replace('<button type="submit">Sign up</button>', ''));
+    let mailboxCallbackCalled = false;
+    await assert.rejects(runSignup(page, {
+      ...mockRegistration,
+      authorized: true,
+      navigate: false,
+      usernameCheckWaitMs: 0,
+      onUsernameSelected: () => { mailboxCallbackCalled = true; return { email: 'unused@example.invalid' }; },
+    }), /could not identify one visible signup submit button/i);
+    assert.equal(mailboxCallbackCalled, false);
   } finally {
     await browser.close();
   }

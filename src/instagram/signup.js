@@ -229,13 +229,27 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
   if (pendingState) return { ...pendingState, submitAttempted: false, diagnostics: [] };
 
   const diagnostics = await inspectSignupForm(page);
-  for (const field of ['email', 'fullName']) {
-    const locator = await resolveUnique(page, field, FIELD_CANDIDATES[field](page), diagnostics);
-    const value = { email, fullName, username, password }[field];
-    if (typeof value !== 'string' || value.length === 0) throw new TypeError(`A ${field} value is required.`);
-    await locator.fill(value);
+  if (typeof fullName !== 'string' || fullName.length === 0) throw new TypeError('A fullName value is required.');
+  if (typeof password !== 'string' || password.length === 0) throw new TypeError('A password value is required.');
+  if (typeof email !== 'string' || email.length === 0) {
+    if (typeof onUsernameSelected !== 'function') throw new TypeError('An email value is required.');
   }
+  const emailLocator = await resolveUnique(page, 'email', FIELD_CANDIDATES.email(page), diagnostics);
+  const fullNameLocator = await resolveUnique(page, 'fullName', FIELD_CANDIDATES.fullName(page), diagnostics);
   const usernameLocator = await resolveUnique(page, 'username', FIELD_CANDIDATES.username(page), diagnostics);
+  const passwordLocator = await resolveUnique(page, 'password', FIELD_CANDIDATES.password(page), diagnostics);
+  const submitCandidates = [
+    page.getByRole('button', { name: /^(?:sign up|register|create account|submit)$/i }),
+    page.locator('button[type="submit"]'),
+  ];
+  let submit = null;
+  for (const candidate of submitCandidates) {
+    const count = await candidate.count().catch(() => 0);
+    if (count === 1 && await candidate.isVisible().catch(() => false)) { submit = candidate; break; }
+    if (count > 1) throw new SignupSelectorError('Signup submit button is ambiguous; refusing to submit.', diagnostics);
+  }
+  if (!submit) throw new SignupSelectorError('Could not identify one visible signup submit button.', diagnostics);
+
   const candidates = usernameCandidates?.length ? usernameCandidates : [username];
   if (candidates.length > 3) throw new RangeError('At most three username candidates may be checked before submission.');
   let selectedUsername = null;
@@ -256,8 +270,18 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
   }
   if (!selectedUsername) throw new SignupSelectorError('Instagram marked all bounded username candidates unavailable before submission.', diagnostics);
 
-  const passwordLocator = await resolveUnique(page, 'password', FIELD_CANDIDATES.password(page), diagnostics);
-  if (typeof password !== 'string' || password.length === 0) throw new TypeError('A password value is required.');
+  const currentBeforeMailbox = await classifyPage(page);
+  if (currentBeforeMailbox.status === 'challenge') return { ...currentBeforeMailbox, username: selectedUsername, submitAttempted: false, diagnostics };
+  if (currentBeforeMailbox.status === 'rejected') return { ...currentBeforeMailbox, username: selectedUsername, submitAttempted: false, diagnostics };
+
+  let resolvedEmail = email;
+  if (typeof onUsernameSelected === 'function') {
+    const selectedDetails = await onUsernameSelected(selectedUsername);
+    if (typeof selectedDetails?.email === 'string') resolvedEmail = selectedDetails.email;
+  }
+  if (typeof resolvedEmail !== 'string' || resolvedEmail.length === 0) throw new TypeError('An email value is required.');
+  await emailLocator.fill(resolvedEmail);
+  await fullNameLocator.fill(fullName);
   await passwordLocator.fill(password);
   let birthdayFilled = false;
   if (await birthdayControlsPresent(page)) {
@@ -266,18 +290,6 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
   } else {
     diagnostics.push({ field: 'dateOfBirth', found: false, control: 'deferred_screen' });
   }
-
-  const submitCandidates = [
-    page.getByRole('button', { name: /sign up|register|create account/i }),
-    page.locator('button[type="submit"]'),
-  ];
-  let submit = null;
-  for (const candidate of submitCandidates) {
-    const count = await candidate.count().catch(() => 0);
-    if (count === 1 && await candidate.isVisible().catch(() => false)) { submit = candidate; break; }
-    if (count > 1) throw new SignupSelectorError('Signup submit button is ambiguous; refusing to submit.', diagnostics);
-  }
-  if (!submit) throw new SignupSelectorError('Could not identify one visible signup submit button.', diagnostics);
 
   const current = await classifyPage(page);
   if (current.status === 'challenge') return { ...current, submitAttempted: false, diagnostics };
