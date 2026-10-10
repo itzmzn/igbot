@@ -11,8 +11,8 @@ The automated signup flow is disabled unless one manually dispatched workflow ru
 - Uses Playwright locators with visible-element checks and selector diagnostics before entering signup details.
 - Supports a date input and accessible month/day/year dropdowns for date of birth.
 - Stops on CAPTCHA, rate limiting, phone checks, suspicious-activity warnings, email verification, or an unknown page state.
-- Retrieves a verification email when one is available, but does not parse or redeem its code. The message is stored only inside the encrypted credential file for manual review.
-- Stores metadata in `accounts/{username}.json` and AES-256-GCM encrypted credentials in `accounts/{username}.enc` after the signup form is submitted and the result is classified.
+- Detects incoming verification mail without reading its contents or extracting a code; verification must be completed manually.
+- Writes JSON metadata only after Instagram displays a recognized success confirmation. If submission occurs but the result is pending or unclear, it preserves only AES-256-GCM encrypted credentials.
 
 Instagram can change its page or selectors at any time. An unknown or changed form stops before submission when the page cannot be identified safely. Instagram may also reject automated browser signup or Mail.tm; this project reports those outcomes and does not work around them.
 
@@ -105,7 +105,7 @@ gh run watch --repo itzmzn/igbot
 
 Do not dispatch this workflow for a mock test. A run without both authorization inputs and all three secrets fails before dependency installation, mailbox creation, or Instagram navigation. Never use a generated or guessed identity for a real registration.
 
-The workflow is non-interactive. If Instagram requires email, phone, CAPTCHA, or another human check, it stops and reports that status. It does not bypass the check. Download the run's `igbot-account-*` artifact. It contains non-sensitive JSON metadata and an encrypted `.enc` credential file; keep the artifact private because people with repository read access may be able to download it. Do not publish decrypted credentials.
+The workflow is non-interactive. If Instagram requires email, phone, CAPTCHA, or another human check, it stops and reports that status. It does not bypass the check. Download the run's `igbot-account-*` artifact. When Instagram confirms success, it contains JSON metadata and an encrypted `.enc` credential file. For an unconfirmed submission, it contains only the encrypted `.enc` file. Keep the artifact private because people with repository read access may be able to download it. Do not publish decrypted credentials.
 
 Decrypt the artifact locally only when needed, using the key file you retained above:
 
@@ -114,10 +114,11 @@ ACCOUNT_ENCRYPTION_KEY="$(< "$HOME/.config/igbot/account-key")" \
   node scripts/decrypt-account.js accounts/USERNAME.enc accounts/USERNAME.private.json
 ```
 
-The command writes a mode-0600 private file and never prints credential contents. Use the Mail.tm credentials and any verification message there to complete the check manually on Instagram. Once you have personally confirmed the account is active, update the local metadata with:
+The command writes a mode-0600 private file and never prints credential contents. Use the Mail.tm credentials to sign in to the inbox manually and complete any verification in a trusted browser. The workflow does not retrieve, store, or submit verification codes. If registration was not confirmed, no JSON metadata file exists. After you personally confirm the account is active, create metadata from the encrypted credentials with:
 
 ```bash
-node scripts/mark-confirmed.js accounts/USERNAME.json --instagram-confirmed
+ACCOUNT_ENCRYPTION_KEY="$(< "$HOME/.config/igbot/account-key")" \
+  node scripts/mark-confirmed.js accounts/USERNAME.enc --instagram-confirmed
 ```
 
 This command is an operator attestation, not an Instagram check. Keep account files and decrypted files out of Git. The `.gitignore` excludes them.
@@ -130,7 +131,7 @@ Open **Actions → Assisted Instagram registration → Run workflow**. Set `auth
 
 - GitHub Actions artifacts in this public repository may be downloadable by repository readers. Account credentials are AES-256-GCM encrypted before upload; the key is not stored in Git or the artifact. Metadata has no password, date of birth, Mail.tm password, token, OTP, or cookie.
 - The encrypted credential artifact is retained for two days by default. Download it promptly after a run that needs manual verification.
-- The encrypted credential bundle can contain the Mail.tm password and, if present, the retrieved verification email. It never contains browser cookies or storage state.
+- The encrypted credential bundle can contain the Instagram password and Mail.tm login credentials. It never contains message contents, browser cookies, or storage state.
 - The debug workflow operates only on local mock pages and uploads synthetic screenshots and traces.
 - Mail.tm availability, domain policy, API limits, and Instagram signup behavior are external dependencies and can change. A Mail.tm outage or Instagram security challenge ends the attempt; there are no repeated real signup submissions.
 - A successful mock test is not evidence that an Instagram account was created.

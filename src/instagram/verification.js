@@ -22,7 +22,7 @@ export async function classifyPage(page) {
 
 export function manualVerificationInstructions(status) {
   if (status === 'verification_required') {
-    return 'Instagram requires email verification. Open the encrypted account artifact, retrieve the message from Mail.tm, and complete verification manually in a trusted browser.';
+    return 'Instagram requires email verification. Download the encrypted credential artifact, decrypt it locally with your GitHub Actions encryption key, sign in to the Mail.tm inbox manually, and complete verification in a trusted browser. This workflow never reads or submits verification codes.';
   }
   if (status === 'challenge') {
     return 'Instagram presented a security challenge. Stop here and complete it manually in a trusted browser; this workflow will not bypass or retry it.';

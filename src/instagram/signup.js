@@ -136,6 +136,28 @@ async function fillBirthday(page, value, diagnostics) {
   diagnostics.push({ field: 'dateOfBirth', found: true, control: 'selects' });
 }
 
+async function birthdayControlsPresent(page) {
+  const dateInputCount = await page.locator('input[type="date"]').count().catch(() => 0);
+  const selectCount = await page.locator('select').count().catch(() => 0);
+  return dateInputCount === 1 || selectCount >= 3;
+}
+
+async function isBirthdayStep(page) {
+  const text = await page.locator('body').innerText({ timeout: 2000 }).catch(() => '');
+  return /birth|birthday|date of birth/i.test(text) && await birthdayControlsPresent(page);
+}
+
+async function resolveBirthdayContinueButton(page, diagnostics) {
+  const candidate = page.getByRole('button', { name: /^(next|continue|confirm)$/i });
+  const count = await candidate.count().catch(() => 0);
+  if (count !== 1 || !await candidate.isVisible().catch(() => false)) {
+    diagnostics.push({ field: 'dateOfBirthContinue', found: false, matchCount: count });
+    throw new SignupSelectorError('Could not identify one visible continue button on the date-of-birth screen.', diagnostics);
+  }
+  diagnostics.push({ field: 'dateOfBirthContinue', found: true, matchCount: 1 });
+  return candidate;
+}
+
 export async function inspectSignupForm(page) {
   const diagnostics = [];
   for (const field of ['email', 'fullName', 'username', 'password']) {
@@ -147,7 +169,7 @@ export async function inspectSignupForm(page) {
   return diagnostics;
 }
 
-export async function runSignup(page, { email, fullName, username, password, dateOfBirth, url, authorized = false, navigate = true, waitMs = 5000 }) {
+export async function runSignup(page, { email, fullName, username, password, dateOfBirth, url, authorized = false, navigate = true, waitMs = 5000, onSubmitted }) {
   if (authorized !== true) throw new Error('Signup submission requires explicit authorization.');
   if (navigate) {
     if (url !== 'https://www.instagram.com/accounts/emailsignup/' && !url?.startsWith('http://127.0.0.1:')) {
@@ -166,7 +188,13 @@ export async function runSignup(page, { email, fullName, username, password, dat
     if (typeof value !== 'string' || value.length === 0) throw new TypeError(`A ${field} value is required.`);
     await locator.fill(value);
   }
-  await fillBirthday(page, dateOfBirth, diagnostics);
+  let birthdayFilled = false;
+  if (await birthdayControlsPresent(page)) {
+    await fillBirthday(page, dateOfBirth, diagnostics);
+    birthdayFilled = true;
+  } else {
+    diagnostics.push({ field: 'dateOfBirth', found: false, control: 'deferred_screen' });
+  }
 
   const submitCandidates = [
     page.getByRole('button', { name: /sign up|register|create account/i }),
@@ -184,10 +212,19 @@ export async function runSignup(page, { email, fullName, username, password, dat
   if (current.status === 'challenge') return { ...current, submitAttempted: false, diagnostics };
   await submit.click();
   const submittedAt = new Date().toISOString();
+  if (typeof onSubmitted === 'function') onSubmitted(submittedAt);
 
   const deadline = Date.now() + waitMs;
   let result = await classifyPage(page);
   while (result.status === 'unknown' && Date.now() < deadline) {
+    if (!birthdayFilled && await isBirthdayStep(page)) {
+      await fillBirthday(page, dateOfBirth, diagnostics);
+      birthdayFilled = true;
+      const continueButton = await resolveBirthdayContinueButton(page, diagnostics);
+      await continueButton.click();
+      result = await classifyPage(page);
+      continue;
+    }
     await page.waitForTimeout(250);
     result = await classifyPage(page);
   }

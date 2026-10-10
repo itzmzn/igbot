@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
 const ALGORITHM = 'aes-256-gcm';
@@ -78,6 +78,42 @@ export function validateAccountMetadata(metadata) {
   if (!Number.isFinite(Date.parse(metadata.createdAt))) return false;
   if (metadata.verificationMethod !== 'email') return false;
   return metadata.credentialsFile === `${metadata.username}.enc`;
+}
+
+export async function verifyEncryptedStorage(encryptionKey, directory = path.resolve('accounts')) {
+  decodeEncryptionKey(encryptionKey);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  let probeDirectory;
+  try {
+    probeDirectory = await mkdtemp(path.join(directory, '.preflight-'));
+    const probePath = path.join(probeDirectory, 'credential-probe.enc');
+    const probe = { purpose: 'storage-preflight', nonce: randomBytes(16).toString('hex') };
+    const handle = await open(probePath, 'wx', 0o600);
+    try { await handle.writeFile(encryptCredentials(probe, encryptionKey), 'utf8'); } finally { await handle.close(); }
+    const restored = decryptCredentials(await readFile(probePath, 'utf8'), encryptionKey);
+    if (restored.purpose !== probe.purpose || restored.nonce !== probe.nonce) throw new Error('round trip mismatch');
+  } catch {
+    throw new Error('Secure account storage preflight failed: encrypted write/read verification was unsuccessful.');
+  } finally {
+    if (probeDirectory) await rm(probeDirectory, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function saveEncryptedCredentials({ username, credentials, encryptionKey, directory = path.resolve('accounts') }) {
+  if (!/^(?!\.)(?!.*\.\.)(?!.*\.$)[a-z0-9._]{1,30}$/i.test(username ?? '')) throw new TypeError('Username has an invalid format.');
+  const encryptedText = encryptCredentials(credentials, encryptionKey);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const credentialPath = path.join(directory, `${username}.enc`);
+  let credentialCreated = false;
+  try {
+    const handle = await open(credentialPath, 'wx', 0o600);
+    credentialCreated = true;
+    try { await handle.writeFile(encryptedText, 'utf8'); } finally { await handle.close(); }
+    return { credentialPath };
+  } catch (error) {
+    if (credentialCreated) await unlink(credentialPath).catch(() => {});
+    throw new Error(`Secure credential persistence failed: ${error.code === 'EEXIST' ? 'an account file already exists for this username' : 'a protected file could not be written'}`);
+  }
 }
 
 export async function saveAccount({ username, email, status, credentials, encryptionKey, directory = path.resolve('accounts'), createdAt }) {

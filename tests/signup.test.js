@@ -100,6 +100,40 @@ test('Playwright selects month, day, and year when the mock form uses dropdown c
   }
 });
 
+test('Playwright handles a separate birthday screen after the single signup submission', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<!doctype html><html><body>
+      <form>
+        <label>Email<input type="email" name="email"></label>
+        <label>Full name<input name="fullName"></label>
+        <label>Username<input name="username"></label>
+        <label>Password<input type="password" name="password"></label>
+        <button type="submit">Sign up</button>
+      </form>
+      <script>
+        window.signupSubmissionCount = 0;
+        document.querySelector('form').addEventListener('submit', event => {
+          event.preventDefault();
+          window.signupSubmissionCount += 1;
+          document.body.innerHTML = '<main><h1>Add your birthday</h1><label>Date of birth<input type="date" name="birthday"></label><button type="button">Next</button></main>';
+          document.querySelector('button').addEventListener('click', () => { document.body.innerHTML = '<h1>Thanks for signing up</h1>'; });
+        });
+      </script>
+    </body></html>`);
+
+    const result = await runSignup(page, { ...mockRegistration, authorized: true, navigate: false, waitMs: 3000 });
+    assert.equal(result.status, 'confirmed');
+    assert.equal(result.submitAttempted, true);
+    assert.equal(await page.evaluate(() => window.signupSubmissionCount), 1);
+    assert.ok(result.diagnostics.some((entry) => entry.field === 'dateOfBirth' && entry.control === 'date_input'));
+    assert.ok(result.diagnostics.some((entry) => entry.field === 'dateOfBirthContinue' && entry.found));
+  } finally {
+    await browser.close();
+  }
+});
+
 test('signup cannot submit without explicit authorization', async () => {
   const browser = await launchChromium();
   try {

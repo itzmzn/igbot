@@ -7,7 +7,7 @@ import { generateRandomBirthday } from './generators/birthday.js';
 import { MailTmClient } from './mail/mailtm.js';
 import { runSignup } from './instagram/signup.js';
 import { manualVerificationInstructions } from './instagram/verification.js';
-import { decodeEncryptionKey, saveAccount } from './storage/account.js';
+import { saveAccount, saveEncryptedCredentials, verifyEncryptedStorage } from './storage/account.js';
 
 function emit(event, details = {}) {
   process.stdout.write(`${JSON.stringify({ event, ...details })}\n`);
@@ -54,20 +54,31 @@ async function runMock(config) {
 
 async function runReal(config) {
   if (!config.authorized) throw new Error('Real registration authorization is required.');
-  // Validate the key before creating a mailbox or navigating to Instagram.
-  decodeEncryptionKey(config.encryptionKey);
+  // Verify protected storage before creating a mailbox or contacting Instagram.
+  const accountsDirectory = path.resolve('accounts');
+  await verifyEncryptedStorage(config.encryptionKey, accountsDirectory);
 
   const username = generateUsername();
   const password = generatePassword();
   const mailPassword = generatePassword();
   const mailboxClient = new MailTmClient();
-  const mailbox = await mailboxClient.createMailbox({ username: `${username}mail`, password: mailPassword });
-  emit('mailbox_created', { status: 'ready' });
-
   const browser = await launchChromium();
+  let mailbox = null;
   let result;
   let diagnostics;
+  let submitAttempted = false;
+  let submittedAt = null;
+  const credentials = () => ({
+    username,
+    password,
+    email: mailbox.address,
+    mailboxPassword: mailPassword,
+    ...(submittedAt ? { submittedAt } : {}),
+  });
   try {
+    mailbox = await mailboxClient.createMailbox({ username: `${username}mail`, password: mailPassword });
+    emit('mailbox_created', { status: 'ready' });
+
     const page = await browser.newPage();
     diagnostics = safeNetworkDiagnostics(page);
     result = await runSignup(page, {
@@ -79,7 +90,9 @@ async function runReal(config) {
       url: INSTAGRAM_SIGNUP_URL,
       authorized: true,
       navigate: true,
+      onSubmitted: (timestamp) => { submitAttempted = true; submittedAt = timestamp; },
     });
+    submitAttempted = result.submitAttempted;
 
     if (result.status === 'challenge' && !result.submitAttempted) {
       emit('registration_stopped', { status: 'security_challenge', submitAttempted: false, reason: result.reason });
@@ -87,19 +100,20 @@ async function runReal(config) {
       return;
     }
 
-    let verificationMessage = null;
+    let messageAvailable = false;
     if (result.status === 'verification_required') {
-      const inbox = await mailboxClient.pollInbox(mailbox.token, {
-        maxAttempts: config.mailPollMaxAttempts,
-        intervalMs: config.mailPollIntervalMs,
-      });
-      if (inbox.messages[0]?.id) {
-        // Retrieve the message for later manual review; this code never extracts or enters verification codes.
-        verificationMessage = await mailboxClient.getMessage(mailbox.token, String(inbox.messages[0].id));
+      try {
+        const inbox = await mailboxClient.pollInbox(mailbox.token, {
+          maxAttempts: config.mailPollMaxAttempts,
+          intervalMs: config.mailPollIntervalMs,
+        });
+        messageAvailable = inbox.messages.length > 0;
+      } catch (error) {
+        emit('mailbox_poll_failed', { kind: error.kind ?? 'mail_api', status: error.status ?? null });
       }
       emit('manual_verification_required', {
         status: 'awaiting_manual_verification',
-        messageAvailable: Boolean(verificationMessage),
+        messageAvailable,
         instructions: manualVerificationInstructions(result.status),
       });
     } else if (result.status === 'challenge') {
@@ -116,33 +130,66 @@ async function runReal(config) {
     const status = result.status === 'confirmed' ? 'confirmed'
       : result.status === 'verification_required' ? 'awaiting_manual_verification'
         : result.status === 'challenge' ? 'security_challenge' : 'registration_unconfirmed';
-    const stored = await saveAccount({
-      username,
-      email: mailbox.address,
-      status,
-      encryptionKey: config.encryptionKey,
-      credentials: {
+    if (status === 'confirmed') {
+      const stored = await saveAccount({
         username,
-        password,
         email: mailbox.address,
-        mailboxPassword: mailbox.password,
-        ...(verificationMessage ? { verificationMessage } : {}),
-      },
-      directory: path.resolve('accounts'),
-      createdAt: result.submittedAt,
-    });
-    emit('account_artifact_prepared', {
-      status,
-      metadataPath: path.relative(process.cwd(), stored.metadataPath),
-      encryptedCredentialsPath: path.relative(process.cwd(), stored.credentialPath),
-      diagnostics: {
-        consoleErrorCount: diagnostics.consoleErrors.length,
-        networkFailureCount: diagnostics.networkFailures.length,
-      },
+        status,
+        encryptionKey: config.encryptionKey,
+        credentials: credentials(),
+        directory: accountsDirectory,
+        createdAt: result.submittedAt,
+      });
+      emit('account_artifact_prepared', {
+        status,
+        metadataPath: path.relative(process.cwd(), stored.metadataPath),
+        encryptedCredentialsPath: path.relative(process.cwd(), stored.credentialPath),
+      });
+    } else {
+      const stored = await saveEncryptedCredentials({
+        username,
+        credentials: credentials(),
+        encryptionKey: config.encryptionKey,
+        directory: accountsDirectory,
+      });
+      emit('registration_not_confirmed', {
+        status,
+        encryptedCredentialsPath: path.relative(process.cwd(), stored.credentialPath),
+      });
+    }
+    emit('browser_diagnostics', {
+      consoleErrorCount: diagnostics.consoleErrors.length,
+      networkFailureCount: diagnostics.networkFailures.length,
     });
     if (status !== 'confirmed') process.exitCode = 2;
+  } catch (error) {
+    if (submitAttempted && mailbox) {
+      try {
+        const stored = await saveEncryptedCredentials({
+          username,
+          credentials: credentials(),
+          encryptionKey: config.encryptionKey,
+          directory: accountsDirectory,
+        });
+        emit('registration_outcome_uncertain', {
+          status: 'registration_unconfirmed',
+          encryptedCredentialsPath: path.relative(process.cwd(), stored.credentialPath),
+        });
+      } catch {
+        throw new Error('Registration was submitted but its outcome or protected credential persistence could not be confirmed. Do not repeat the attempt.');
+      }
+    }
+    throw error;
   } finally {
-    await browser.close();
+    await browser.close().catch(() => emit('browser_cleanup', { status: 'failed' }));
+    if (!submitAttempted && mailbox) {
+      try {
+        await mailboxClient.deleteMailbox(mailbox.token, mailbox.accountId);
+        emit('mailbox_cleanup', { status: 'deleted' });
+      } catch (error) {
+        emit('mailbox_cleanup', { status: 'failed', kind: error.kind ?? 'mail_api', httpStatus: error.status ?? null });
+      }
+    }
   }
 }
 

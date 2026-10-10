@@ -1,14 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
   createAccountMetadata,
   decryptCredentials,
   encryptCredentials,
+  saveEncryptedCredentials,
   saveAccount,
   validateAccountMetadata,
+  verifyEncryptedStorage,
 } from '../src/storage/account.js';
 
 const key = Buffer.from('0123456789abcdef0123456789abcdef').toString('base64');
@@ -72,6 +74,35 @@ test('saveAccount writes metadata and encrypted credentials only, with no plaint
       username: 'igmockuser', email: 'igmockuser@mail.example', status: 'confirmed', credentials, encryptionKey: key, directory,
     }), /already exists/i);
     assert.equal(JSON.parse(await readFile(saved.metadataPath, 'utf8')).status, 'confirmed');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('encrypted storage preflight round-trips a probe and removes it', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'igbot-storage-preflight-'));
+  try {
+    await verifyEncryptedStorage(key, directory);
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('unconfirmed registrations can persist encrypted credentials without creating public metadata', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'igbot-pending-account-'));
+  try {
+    const saved = await saveEncryptedCredentials({
+      username: 'igmockuser', credentials, encryptionKey: key, directory,
+    });
+    assert.deepEqual(await readdir(directory), ['igmockuser.enc']);
+    const encryptedText = await readFile(saved.credentialPath, 'utf8');
+    assert.equal(encryptedText.includes(credentials.password), false);
+    assert.deepEqual(decryptCredentials(encryptedText, key), credentials);
+    await assert.rejects(saveEncryptedCredentials({
+      username: 'igmockuser', credentials, encryptionKey: key, directory,
+    }), /already exists/i);
+    assert.deepEqual(await readdir(directory), ['igmockuser.enc']);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
