@@ -36,12 +36,22 @@ async function main() {
       username: inputs.filter((input) => /username/i.test(`${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder} ${input.labels.join(' ')} ${input.labelledByText} ${input.parentText}`)).length,
       password: inputs.filter((input) => /password/i.test(`${input.type} ${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder}`)).length,
     };
+    const playwrightLocatorCounts = {
+      emailLabel: await page.getByLabel(/mobile number or email|email address|email/i).count(),
+      emailName: await page.locator('input[name="emailOrPhone"]').count(),
+      emailType: await page.locator('input[type="email"]').count(),
+      fullNameLabel: await page.getByLabel(/full name/i).count(),
+      usernameLabel: await page.getByLabel(/username/i).count(),
+      passwordLabel: await page.getByLabel(/password/i).count(),
+      visibleTextInputs: await page.locator('input[type="text"]:visible').count(),
+    };
     emit('instagram_form_diagnostic', {
       pageState,
       urlHost: new URL(page.url()).hostname,
       inputs,
       selectCount: await page.locator('select').count(),
       selectors,
+      playwrightLocatorCounts,
     });
     if (pageState.status === 'challenge') process.exitCode = 2;
   } finally {
