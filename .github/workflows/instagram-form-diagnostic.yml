@@ -1,0 +1,26 @@
+name: Read-only Instagram form diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Node.js dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Chromium and runner dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Inspect the official signup form without filling or submitting
+        run: node scripts/inspect-instagram-form.js
