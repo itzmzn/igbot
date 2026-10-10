@@ -183,6 +183,35 @@ export async function inspectSignupForm(page) {
   return diagnostics;
 }
 
+async function waitForSignupForm(page, timeoutMs = 15_000) {
+  const fields = ['email', 'fullName', 'username', 'password'];
+  const deadline = Date.now() + timeoutMs;
+  let diagnostics = [];
+  while (Date.now() <= deadline) {
+    const state = await classifyPage(page);
+    if (state.status === 'challenge' || state.status === 'rejected') return state;
+    diagnostics = [];
+    let allReady = true;
+    for (const field of fields) {
+      let ready = false;
+      for (const locator of FIELD_CANDIDATES[field](page)) {
+        const count = await locator.count().catch(() => 0);
+        if (count === 1 && await locator.isVisible().catch(() => false)) {
+          ready = true;
+          break;
+        }
+      }
+      if (!ready) {
+        allReady = false;
+        diagnostics.push({ field, found: false });
+      }
+    }
+    if (allReady) return null;
+    await page.waitForTimeout(250);
+  }
+  throw new SignupSelectorError('Signup form fields did not become visible before the bounded page-detection timeout.', diagnostics);
+}
+
 export async function runSignup(page, { email, fullName, username, usernameCandidates, password, dateOfBirth, url, authorized = false, navigate = true, waitMs = 5000, usernameCheckWaitMs = 900, onSubmitted, onUsernameSelected }) {
   if (authorized !== true) throw new Error('Signup submission requires explicit authorization.');
   if (navigate) {
@@ -194,6 +223,10 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
   await page.locator('body').waitFor({ state: 'visible', timeout: 15_000 });
   const before = await classifyPage(page);
   if (before.status === 'challenge') return { ...before, submitAttempted: false, diagnostics: [] };
+  if (before.status === 'rejected') return { ...before, submitAttempted: false, diagnostics: [] };
+
+  const pendingState = await waitForSignupForm(page);
+  if (pendingState) return { ...pendingState, submitAttempted: false, diagnostics: [] };
 
   const diagnostics = await inspectSignupForm(page);
   for (const field of ['email', 'fullName']) {

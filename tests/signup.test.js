@@ -81,6 +81,45 @@ test('Chromium launches and fills the mock signup form, submits once, and recogn
   }
 });
 
+test('signup waits for delayed registration form hydration before resolving locators', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<!doctype html><html><body><p>Loading signup form</p></body></html>');
+    await page.evaluate((markup) => {
+      window.signupSubmissionCount = 0;
+      setTimeout(() => {
+        document.body.innerHTML = markup;
+        document.querySelector('form').addEventListener('submit', (event) => {
+          event.preventDefault();
+          window.signupSubmissionCount += 1;
+          document.body.innerHTML = '<h1>Thanks for signing up</h1>';
+        });
+      }, 350);
+    }, `<form>
+      <label>Email<input type="email" name="email"></label>
+      <label>Full name<input name="fullName"></label>
+      <label>Username<input name="username"></label>
+      <label>Password<input type="password" name="password"></label>
+      <label>Date of birth<input type="date" name="birthday"></label>
+      <button type="submit">Sign up</button>
+    </form>`);
+
+    const result = await runSignup(page, {
+      ...mockRegistration,
+      authorized: true,
+      navigate: false,
+      waitMs: 1500,
+      usernameCheckWaitMs: 0,
+    });
+    assert.equal(result.status, 'confirmed');
+    assert.equal(result.submitAttempted, true);
+    assert.equal(await page.evaluate(() => window.signupSubmissionCount), 1);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('Playwright selects month, day, and year when the mock form uses dropdown controls', async () => {
   const browser = await launchChromium();
   try {
