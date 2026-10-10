@@ -29,6 +29,7 @@ jobs:
       REGISTRANT_FULL_NAME: ${{ secrets.REGISTRANT_FULL_NAME }}
       REGISTRANT_DOB: ${{ secrets.REGISTRANT_DOB }}
       ACCOUNT_ENCRYPTION_KEY: ${{ secrets.ACCOUNT_ENCRYPTION_KEY }}
+      INSTAGRAM_USERNAME_PREFIX: dasunpriyanath
       REAL_SIGNUP_AUTHORIZED: ${{ inputs.authorize_once }}
       REAL_SIGNUP_CONFIRMATION: ${{ inputs.confirmation_phrase }}
     steps:

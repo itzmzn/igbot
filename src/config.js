@@ -25,6 +25,10 @@ export function createConfig(env = process.env) {
 
   const maxPollAttempts = Number(env.MAIL_POLL_MAX_ATTEMPTS ?? 12);
   const pollIntervalMs = Number(env.MAIL_POLL_INTERVAL_MS ?? 5000);
+  const usernamePrefix = String(env.INSTAGRAM_USERNAME_PREFIX ?? 'ig').trim();
+  if (!/^[a-z0-9]{1,24}$/i.test(usernamePrefix)) {
+    throw new Error('INSTAGRAM_USERNAME_PREFIX must contain letters and digits and leave room for a numeric suffix.');
+  }
   if (!Number.isInteger(maxPollAttempts) || maxPollAttempts < 1 || maxPollAttempts > 30) {
     throw new Error('MAIL_POLL_MAX_ATTEMPTS must be an integer from 1 to 30.');
   }
@@ -37,6 +41,7 @@ export function createConfig(env = process.env) {
     authorized: mode === 'mock' || authorized,
     fullName,
     dateOfBirth,
+    usernamePrefix,
     encryptionKey: env.ACCOUNT_ENCRYPTION_KEY ?? null,
     signupUrl: INSTAGRAM_SIGNUP_URL,
     mailPollMaxAttempts: maxPollAttempts,

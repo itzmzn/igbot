@@ -16,3 +16,14 @@ export function generateUsername({ length = 14, prefix = 'ig' } = {}) {
   }
   return `${prefix}${suffix}`;
 }
+
+export function generateUsernameWithNumericSuffix(prefix, suffixLength = 6) {
+  if (typeof prefix !== 'string' || !/^[a-z0-9]{1,26}$/i.test(prefix)) {
+    throw new TypeError('Username prefix must contain only letters and digits and leave room for a numeric suffix.');
+  }
+  if (!Number.isInteger(suffixLength) || suffixLength < 4 || suffixLength > 8 || prefix.length + suffixLength > 30) {
+    throw new RangeError('Numeric username suffix must be 4–8 digits and keep the username within 30 characters.');
+  }
+  const suffix = randomInt(0, 10 ** suffixLength).toString().padStart(suffixLength, '0');
+  return `${prefix}${suffix}`;
+}

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { createConfig, INSTAGRAM_SIGNUP_URL } from './config.js';
 import { launchChromium } from './browser/chromium.js';
-import { generateUsername } from './generators/username.js';
+import { generateUsername, generateUsernameWithNumericSuffix } from './generators/username.js';
 import { generatePassword } from './generators/password.js';
 import { generateRandomBirthday } from './generators/birthday.js';
 import { MailTmClient } from './mail/mailtm.js';
@@ -58,7 +58,13 @@ async function runReal(config) {
   const accountsDirectory = path.resolve('accounts');
   await verifyEncryptedStorage(config.encryptionKey, accountsDirectory);
 
-  const username = generateUsername();
+  const usernameCandidates = [];
+  for (let attempt = 0; attempt < 6 && usernameCandidates.length < 3; attempt += 1) {
+    const candidate = generateUsernameWithNumericSuffix(config.usernamePrefix);
+    if (!usernameCandidates.includes(candidate)) usernameCandidates.push(candidate);
+  }
+  if (usernameCandidates.length !== 3) throw new Error('Could not generate distinct username candidates within the configured limit.');
+  let username = usernameCandidates[0];
   const password = generatePassword();
   const mailPassword = generatePassword();
   const mailboxClient = new MailTmClient();
@@ -85,6 +91,8 @@ async function runReal(config) {
       email: mailbox.address,
       fullName: config.fullName,
       username,
+      usernameCandidates,
+      onUsernameSelected: (selected) => { username = selected; },
       password,
       dateOfBirth: config.dateOfBirth,
       url: INSTAGRAM_SIGNUP_URL,
@@ -93,9 +101,15 @@ async function runReal(config) {
       onSubmitted: (timestamp) => { submitAttempted = true; submittedAt = timestamp; },
     });
     submitAttempted = result.submitAttempted;
+    username = result.username ?? username;
 
     if (result.status === 'challenge' && !result.submitAttempted) {
       emit('registration_stopped', { status: 'security_challenge', submitAttempted: false, reason: result.reason });
+      process.exitCode = 2;
+      return;
+    }
+    if (result.status === 'rejected' && !result.submitAttempted) {
+      emit('registration_stopped', { status: 'rejected', submitAttempted: false, username, reason: result.reason });
       process.exitCode = 2;
       return;
     }
@@ -113,23 +127,28 @@ async function runReal(config) {
       }
       emit('manual_verification_required', {
         status: 'awaiting_manual_verification',
+        username,
         messageAvailable,
         instructions: manualVerificationInstructions(result.status),
       });
     } else if (result.status === 'challenge') {
       emit('manual_verification_required', {
         status: 'security_challenge',
+        username,
         instructions: manualVerificationInstructions(result.status),
       });
+    } else if (result.status === 'rejected') {
+      emit('registration_rejected', { status: 'rejected', username, reason: result.reason });
     } else if (result.status === 'unknown') {
-      emit('registration_unconfirmed', { status: 'registration_unconfirmed' });
+      emit('registration_unconfirmed', { status: 'registration_unconfirmed', username });
     } else {
-      emit('registration_confirmed', { status: 'confirmed' });
+      emit('registration_confirmed', { status: 'confirmed', username });
     }
 
     const status = result.status === 'confirmed' ? 'confirmed'
       : result.status === 'verification_required' ? 'awaiting_manual_verification'
-        : result.status === 'challenge' ? 'security_challenge' : 'registration_unconfirmed';
+        : result.status === 'challenge' ? 'security_challenge'
+          : result.status === 'rejected' ? 'rejected' : 'registration_unconfirmed';
     if (status === 'confirmed') {
       const stored = await saveAccount({
         username,
@@ -142,6 +161,7 @@ async function runReal(config) {
       });
       emit('account_artifact_prepared', {
         status,
+        username,
         metadataPath: path.relative(process.cwd(), stored.metadataPath),
         encryptedCredentialsPath: path.relative(process.cwd(), stored.credentialPath),
       });
@@ -154,6 +174,7 @@ async function runReal(config) {
       });
       emit('registration_not_confirmed', {
         status,
+        username,
         encryptedCredentialsPath: path.relative(process.cwd(), stored.credentialPath),
       });
     }

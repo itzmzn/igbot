@@ -1,15 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateUsername } from '../src/generators/username.js';
+import { generateUsername, generateUsernameWithNumericSuffix } from '../src/generators/username.js';
 import { generatePassword } from '../src/generators/password.js';
 import { ageOnDate, generateRandomBirthday, isValidDateOfBirth, parseIsoDate } from '../src/generators/birthday.js';
 import { createConfig, REAL_SIGNUP_CONFIRMATION } from '../src/config.js';
 
- test('username generator returns valid, bounded, distinct-looking usernames', () => {
+test('username generator returns valid, bounded, distinct-looking usernames', () => {
   const values = Array.from({ length: 200 }, () => generateUsername());
   assert.ok(values.every((value) => /^[a-z0-9]{14}$/.test(value)));
   assert.ok(new Set(values).size > 190);
   assert.throws(() => generateUsername({ length: 2 }), RangeError);
+});
+
+test('username generator preserves the supplied prefix and adds a cryptographically random numeric suffix', () => {
+  const values = Array.from({ length: 100 }, () => generateUsernameWithNumericSuffix('dasunpriyanath', 6));
+  assert.ok(values.every((value) => /^dasunpriyanath\d{6}$/.test(value)));
+  assert.ok(new Set(values).size > 95);
+  assert.throws(() => generateUsernameWithNumericSuffix('too-long-prefix-name-here', 8), /prefix/i);
+  assert.throws(() => generateUsernameWithNumericSuffix('valid', 3), /suffix/i);
 });
 
 test('password generator is strong, at least twenty characters, and includes all character groups', () => {

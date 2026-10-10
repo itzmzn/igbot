@@ -31,6 +31,8 @@ const FIELD_CANDIDATES = {
   ],
 };
 
+const USERNAME_UNAVAILABLE = /(?:this\s+)?username\s+(?:is\s+)?(?:not available|unavailable|isn't available|is not available|already taken|has already been taken)|username.{0,40}(?:already taken|unavailable)|(?:not available|already taken).{0,40}username/i;
+
 async function resolveUnique(page, field, candidates, diagnostics) {
   for (const locator of candidates) {
     const count = await locator.count().catch(() => 0);
@@ -158,6 +160,18 @@ async function resolveBirthdayContinueButton(page, diagnostics) {
   return candidate;
 }
 
+async function usernameIsUnavailable(page, locator) {
+  const bodyText = await page.locator('body').innerText({ timeout: 2000 }).catch(() => '');
+  if (USERNAME_UNAVAILABLE.test(bodyText.slice(0, 30_000))) return true;
+  const fieldState = await locator.evaluate((element) => {
+    const describedBy = (element.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+    const describedText = describedBy.map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+    const parentText = element.parentElement?.parentElement?.innerText ?? '';
+    return `${describedText} ${parentText}`.slice(0, 1000);
+  }).catch(() => '');
+  return USERNAME_UNAVAILABLE.test(fieldState);
+}
+
 export async function inspectSignupForm(page) {
   const diagnostics = [];
   for (const field of ['email', 'fullName', 'username', 'password']) {
@@ -169,7 +183,7 @@ export async function inspectSignupForm(page) {
   return diagnostics;
 }
 
-export async function runSignup(page, { email, fullName, username, password, dateOfBirth, url, authorized = false, navigate = true, waitMs = 5000, onSubmitted }) {
+export async function runSignup(page, { email, fullName, username, usernameCandidates, password, dateOfBirth, url, authorized = false, navigate = true, waitMs = 5000, usernameCheckWaitMs = 900, onSubmitted, onUsernameSelected }) {
   if (authorized !== true) throw new Error('Signup submission requires explicit authorization.');
   if (navigate) {
     if (url !== 'https://www.instagram.com/accounts/emailsignup/' && !url?.startsWith('http://127.0.0.1:')) {
@@ -182,12 +196,36 @@ export async function runSignup(page, { email, fullName, username, password, dat
   if (before.status === 'challenge') return { ...before, submitAttempted: false, diagnostics: [] };
 
   const diagnostics = await inspectSignupForm(page);
-  for (const field of ['email', 'fullName', 'username', 'password']) {
+  for (const field of ['email', 'fullName']) {
     const locator = await resolveUnique(page, field, FIELD_CANDIDATES[field](page), diagnostics);
     const value = { email, fullName, username, password }[field];
     if (typeof value !== 'string' || value.length === 0) throw new TypeError(`A ${field} value is required.`);
     await locator.fill(value);
   }
+  const usernameLocator = await resolveUnique(page, 'username', FIELD_CANDIDATES.username(page), diagnostics);
+  const candidates = usernameCandidates?.length ? usernameCandidates : [username];
+  if (candidates.length > 3) throw new RangeError('At most three username candidates may be checked before submission.');
+  let selectedUsername = null;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (typeof candidate !== 'string' || !/^[a-z0-9]{1,30}$/i.test(candidate)) throw new TypeError('A username candidate has an invalid format.');
+    await usernameLocator.fill(candidate);
+    await usernameLocator.press('Tab').catch(() => {});
+    if (usernameCheckWaitMs > 0) await page.waitForTimeout(usernameCheckWaitMs);
+    if (await usernameIsUnavailable(page, usernameLocator)) {
+      diagnostics.push({ field: 'usernameAvailability', candidateIndex: index + 1, status: 'unavailable' });
+      continue;
+    }
+    selectedUsername = candidate;
+    diagnostics.push({ field: 'usernameAvailability', candidateIndex: index + 1, status: 'no_unavailable_feedback' });
+    if (typeof onUsernameSelected === 'function') onUsernameSelected(candidate);
+    break;
+  }
+  if (!selectedUsername) throw new SignupSelectorError('Instagram marked all bounded username candidates unavailable before submission.', diagnostics);
+
+  const passwordLocator = await resolveUnique(page, 'password', FIELD_CANDIDATES.password(page), diagnostics);
+  if (typeof password !== 'string' || password.length === 0) throw new TypeError('A password value is required.');
+  await passwordLocator.fill(password);
   let birthdayFilled = false;
   if (await birthdayControlsPresent(page)) {
     await fillBirthday(page, dateOfBirth, diagnostics);
@@ -210,6 +248,7 @@ export async function runSignup(page, { email, fullName, username, password, dat
 
   const current = await classifyPage(page);
   if (current.status === 'challenge') return { ...current, submitAttempted: false, diagnostics };
+  if (current.status === 'rejected') return { ...current, username: selectedUsername, submitAttempted: false, diagnostics };
   await submit.click();
   const submittedAt = new Date().toISOString();
   if (typeof onSubmitted === 'function') onSubmitted(submittedAt);
@@ -228,5 +267,5 @@ export async function runSignup(page, { email, fullName, username, password, dat
     await page.waitForTimeout(250);
     result = await classifyPage(page);
   }
-  return { ...result, submitAttempted: true, submittedAt, diagnostics };
+  return { ...result, username: selectedUsername, submitAttempted: true, submittedAt, diagnostics };
 }

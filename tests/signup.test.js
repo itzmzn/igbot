@@ -134,6 +134,91 @@ test('Playwright handles a separate birthday screen after the single signup subm
   }
 });
 
+test('Playwright checks username availability and selects another candidate before submitting once', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<!doctype html><html><body>
+      <form>
+        <label>Email<input type="email" name="email"></label>
+        <label>Full name<input name="fullName"></label>
+        <label>Username<input name="username"></label>
+        <div id="username-error" aria-live="polite"></div>
+        <label>Password<input type="password" name="password"></label>
+        <label>Date of birth<input type="date" name="birthday"></label>
+        <button type="submit">Sign up</button>
+      </form>
+      <script>
+        window.signupSubmissionCount = 0;
+        document.querySelector('[name="username"]').addEventListener('input', event => {
+          document.querySelector('#username-error').textContent = event.target.value === 'dasunpriyanath000001'
+            ? "This username isn't available. Please try another."
+            : '';
+        });
+        document.querySelector('form').addEventListener('submit', event => {
+          event.preventDefault();
+          window.signupSubmissionCount += 1;
+          document.body.innerHTML = '<h1>Thanks for signing up</h1>';
+        });
+      </script>
+    </body></html>`);
+
+    const result = await runSignup(page, {
+      ...mockRegistration,
+      username: 'dasunpriyanath000001',
+      usernameCandidates: ['dasunpriyanath000001', 'dasunpriyanath000002'],
+      authorized: true,
+      navigate: false,
+      waitMs: 3000,
+      usernameCheckWaitMs: 10,
+    });
+    assert.equal(result.status, 'confirmed');
+    assert.equal(result.username, 'dasunpriyanath000002');
+    assert.equal(result.submitAttempted, true);
+    assert.equal(await page.evaluate(() => window.signupSubmissionCount), 1);
+    assert.ok(result.diagnostics.some((entry) => entry.field === 'usernameAvailability' && entry.candidateIndex === 1 && entry.status === 'unavailable'));
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Playwright refuses to submit if every bounded username candidate is unavailable', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<!doctype html><html><body>
+      <form>
+        <label>Email<input type="email" name="email"></label>
+        <label>Full name<input name="fullName"></label>
+        <label>Username<input name="username"></label>
+        <div id="username-error" aria-live="polite"></div>
+        <label>Password<input type="password" name="password"></label>
+        <label>Date of birth<input type="date" name="birthday"></label>
+        <button type="submit">Sign up</button>
+      </form>
+      <script>
+        window.signupSubmissionCount = 0;
+        document.querySelector('[name="username"]').addEventListener('input', event => {
+          document.querySelector('#username-error').textContent = "This username isn't available. Please try another.";
+        });
+        document.querySelector('form').addEventListener('submit', event => { event.preventDefault(); window.signupSubmissionCount += 1; });
+      </script>
+    </body></html>`);
+
+    await assert.rejects(runSignup(page, {
+      ...mockRegistration,
+      username: 'dasunpriyanath000001',
+      usernameCandidates: ['dasunpriyanath000001', 'dasunpriyanath000002', 'dasunpriyanath000003'],
+      authorized: true,
+      navigate: false,
+      usernameCheckWaitMs: 10,
+    }), /all bounded username candidates unavailable/i);
+    assert.equal(await page.evaluate(() => window.signupSubmissionCount), 0);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('signup cannot submit without explicit authorization', async () => {
   const browser = await launchChromium();
   try {
@@ -171,6 +256,7 @@ test('page-state detection distinguishes verification and security challenges', 
       ['We detected unusual activity. Confirm it is you.', { status: 'challenge', reason: 'suspicious_activity' }],
       ['Confirm your phone number to continue.', { status: 'challenge', reason: 'phone_verification' }],
       ['Check your email for the confirmation code.', { status: 'verification_required', reason: 'email_verification' }],
+      ["This username isn't available. Please try another.", { status: 'rejected', reason: 'username_unavailable' }],
       ['A page with no known completion or challenge copy.', { status: 'unknown', reason: 'no_known_terminal_state' }],
     ];
     for (const [copy, expected] of cases) {

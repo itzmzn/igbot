@@ -6,6 +6,7 @@ const CHALLENGE_PATTERNS = [
 ];
 const EMAIL_VERIFICATION = /confirm your email|verify your email|check your email|email verification|enter the confirmation code sent to your email/i;
 const SUCCESS = /welcome to instagram|your account has been created|account created successfully|thanks for signing up/i;
+const USERNAME_UNAVAILABLE = /(?:this\s+)?username\s+(?:is\s+)?(?:not available|unavailable|isn't available|is not available|already taken|has already been taken)|username.{0,40}(?:already taken|unavailable)|(?:not available|already taken).{0,40}username/i;
 
 export async function classifyPage(page) {
   const bodyText = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
@@ -15,6 +16,7 @@ export async function classifyPage(page) {
   for (const challenge of CHALLENGE_PATTERNS) {
     if (challenge.pattern.test(visibleText)) return { status: 'challenge', reason: challenge.type };
   }
+  if (USERNAME_UNAVAILABLE.test(visibleText)) return { status: 'rejected', reason: 'username_unavailable' };
   if (EMAIL_VERIFICATION.test(visibleText)) return { status: 'verification_required', reason: 'email_verification' };
   if (SUCCESS.test(visibleText)) return { status: 'confirmed', reason: 'success_message' };
   return { status: 'unknown', reason: 'no_known_terminal_state' };
