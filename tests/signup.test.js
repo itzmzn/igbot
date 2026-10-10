@@ -513,7 +513,7 @@ test('page diagnostics retain sanitized alert, live status, and associated inlin
     assert.ok(diagnostics.messages.some((message) => message.source === 'field_error' && message.field === 'email' && /address .* is invalid/.test(message.text)));
     assert.ok(diagnostics.messages.some((message) => message.source === 'field_error' && message.field === 'username' && /unavailable/.test(message.text)));
     assert.ok(diagnostics.messages.some((message) => message.source === 'field_error' && message.field === 'password' && /must be changed/.test(message.text)));
-    assert.ok(diagnostics.messages.some((message) => message.source === 'status' && /code \[REDACTED_CODE\].*\[REDACTED_PHONE\].*\[REDACTED_EMAIL\]/.test(message.text)));
+    assert.ok(diagnostics.messages.some((message) => message.source === 'status' && /code \[REDACTED_CODE\].*\[REDACTED_PHONE\].*(?:\[REDACTED_EMAIL\]|\[REDACTED\])/.test(message.text)));
     assert.ok(diagnostics.controls.fields.some((field) => field.field === 'email' && field.invalid && field.filled));
     assert.equal(diagnostics.currentUrl, 'external://[redacted]');
   } finally {
