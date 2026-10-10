@@ -265,7 +265,6 @@ export async function runSignup(page, { email, fullName, username, usernameCandi
     }
     selectedUsername = candidate;
     diagnostics.push({ field: 'usernameAvailability', candidateIndex: index + 1, status: 'no_unavailable_feedback' });
-    if (typeof onUsernameSelected === 'function') onUsernameSelected(candidate);
     break;
   }
   if (!selectedUsername) throw new SignupSelectorError('Instagram marked all bounded username candidates unavailable before submission.', diagnostics);

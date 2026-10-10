@@ -175,6 +175,7 @@ test('Playwright handles a separate birthday screen after the single signup subm
 
 test('Playwright checks username availability and selects another candidate before submitting once', async () => {
   const browser = await launchChromium();
+  let mailboxCallbackCount = 0;
   try {
     const page = await browser.newPage();
     await page.setContent(`<!doctype html><html><body>
@@ -211,13 +212,17 @@ test('Playwright checks username availability and selects another candidate befo
       navigate: false,
       waitMs: 3000,
       usernameCheckWaitMs: 10,
-      onUsernameSelected: async () => ({ email: 'generated-alias@example.invalid' }),
+      onUsernameSelected: async () => {
+        mailboxCallbackCount += 1;
+        return { email: 'generated-alias@example.invalid' };
+      },
     });
     assert.equal(result.status, 'confirmed');
     assert.equal(result.username, 'dasunpriyanath000002');
     assert.equal(result.submitAttempted, true);
     assert.equal(await page.evaluate(() => window.signupSubmissionCount), 1);
     assert.equal(await page.evaluate(() => window.submittedEmail), 'generated-alias@example.invalid');
+    assert.equal(mailboxCallbackCount, 1);
     assert.ok(result.diagnostics.some((entry) => entry.field === 'usernameAvailability' && entry.candidateIndex === 1 && entry.status === 'unavailable'));
   } finally {
     await browser.close();
