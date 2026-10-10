@@ -19,16 +19,21 @@ async function main() {
       return {
         type: element.getAttribute('type') ?? element.tagName.toLowerCase(),
         name: element.getAttribute('name') ?? '',
+        id: element.id ?? '',
         autocomplete: element.getAttribute('autocomplete') ?? '',
         ariaLabel: element.getAttribute('aria-label') ?? '',
         placeholder: element.getAttribute('placeholder') ?? '',
+        labels: Array.from(element.labels ?? []).map((label) => label.textContent?.trim() ?? ''),
+        labelledByText: (element.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent?.trim() ?? '').join(' '),
+        parentText: (element.parentElement?.innerText ?? '').trim().replace(/\s+/g, ' ').slice(0, 160),
         visible: rect.width > 0 && rect.height > 0,
       };
     }));
     const selectors = {
-      emailOrPhone: inputs.filter((input) => /email|phone/i.test(`${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder}`)).length,
-      fullName: inputs.filter((input) => /full.?name|name/i.test(`${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder}`)).length,
-      username: inputs.filter((input) => /username/i.test(`${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder}`)).length,
+      emailOrPhone: inputs.filter((input) => /email|phone/i.test(`${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder} ${input.labels.join(' ')} ${input.labelledByText} ${input.parentText}`)).length,
+      fullName: inputs.filter((input) => /full.?name|name/i.test(`${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder} ${input.labels.join(' ')} ${input.labelledByText} ${input.parentText}`)).length,
+      username: inputs.filter((input) => /username/i.test(`${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder} ${input.labels.join(' ')} ${input.labelledByText} ${input.parentText}`)).length,
       password: inputs.filter((input) => /password/i.test(`${input.type} ${input.name} ${input.autocomplete} ${input.ariaLabel} ${input.placeholder}`)).length,
     };
     emit('instagram_form_diagnostic', {
