@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+accounts/*
+!accounts/.gitkeep
+*.enc
+*.private.json
+*.tmp
+artifacts/
+test-results/
+playwright-report/
+playwright/.cache/
+.DS_Store

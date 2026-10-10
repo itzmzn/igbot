@@ -1,0 +1,76 @@
+name: Assisted Instagram registration
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorize_once:
+        description: I authorize one registration attempt using the truthful identity stored in repository secrets
+        required: true
+        type: boolean
+        default: false
+      confirmation_phrase:
+        description: Type AUTHORIZE ONE REAL REGISTRATION to continue
+        required: true
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: igbot-single-registration
+  cancel-in-progress: false
+
+jobs:
+  signup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      REGISTRANT_FULL_NAME: ${{ secrets.REGISTRANT_FULL_NAME }}
+      REGISTRANT_DOB: ${{ secrets.REGISTRANT_DOB }}
+      ACCOUNT_ENCRYPTION_KEY: ${{ secrets.ACCOUNT_ENCRYPTION_KEY }}
+      REAL_SIGNUP_AUTHORIZED: ${{ inputs.authorize_once }}
+      REAL_SIGNUP_CONFIRMATION: ${{ inputs.confirmation_phrase }}
+    steps:
+      - name: Require a first-run authorization and configured secrets
+        shell: bash
+        run: |
+          if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
+            echo "This workflow run has already been attempted. Dispatch a new run only after reviewing the previous result."
+            exit 1
+          fi
+          if [[ "$REAL_SIGNUP_AUTHORIZED" != "true" || "$REAL_SIGNUP_CONFIRMATION" != "AUTHORIZE ONE REAL REGISTRATION" ]]; then
+            echo "No registration authorized. Set authorize_once and enter the exact confirmation phrase."
+            exit 1
+          fi
+          if [[ -z "$REGISTRANT_FULL_NAME" || -z "$REGISTRANT_DOB" || -z "$ACCOUNT_ENCRYPTION_KEY" ]]; then
+            echo "Required identity or encryption secrets are missing. No registration was started."
+            exit 1
+          fi
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Resolve dependency lock on the hosted runner
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Install Node.js dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Chromium and runner dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Run one assisted registration attempt
+        env:
+          RUN_MODE: real
+          MAIL_POLL_MAX_ATTEMPTS: '12'
+          MAIL_POLL_INTERVAL_MS: '5000'
+        run: node src/index.js
+      - name: Preserve encrypted account files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: igbot-account-${{ github.run_id }}
+          path: accounts/
+          if-no-files-found: ignore
+          retention-days: 2

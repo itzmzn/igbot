@@ -1,0 +1,20 @@
+{
+  "name": "igbot",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Single-account Instagram registration assistant powered by Playwright, Chromium, Mail.tm and GitHub Actions.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/*.test.js",
+    "validate:json": "node scripts/validate-account-json.js",
+    "decrypt-account": "node scripts/decrypt-account.js",
+    "mark-confirmed": "node scripts/mark-confirmed.js"
+  },
+  "dependencies": {
+    "playwright": "1.64.0"
+  }
+}
