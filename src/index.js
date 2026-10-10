@@ -37,8 +37,12 @@ function safeNetworkDiagnostics(page) {
   return diagnostics;
 }
 
-async function saveSanitizedDiagnostics({ phase, page, events, result }) {
-  const pageDiagnostics = await collectPageDiagnostics(page, { urlChanges: events.urlChanges, afterSubmit: result?.submitAttempted === true });
+async function saveSanitizedDiagnostics({ phase, page, events, result, sensitiveValues = [] }) {
+  const pageDiagnostics = await collectPageDiagnostics(page, {
+    urlChanges: events.urlChanges,
+    afterSubmit: result?.submitAttempted === true,
+    sensitiveValues,
+  });
   const report = {
     schemaVersion: 1,
     phase,
@@ -196,7 +200,10 @@ async function runReal(config) {
         emit('registration_unconfirmed', { status: 'registration_unconfirmed', username, reason: result.reason });
       }
       if (page && pageEvents) {
-        const diagnosticPath = await saveSanitizedDiagnostics({ phase: 'signup', page, events: pageEvents, result });
+        const diagnosticPath = await saveSanitizedDiagnostics({
+          phase: 'signup', page, events: pageEvents, result,
+          sensitiveValues: [config.fullName, config.dateOfBirth, username, ...usernameCandidates, password, mailPassword, mailbox?.address, mailbox?.token],
+        });
         emit('sanitized_diagnostics_saved', { path: diagnosticPath });
       }
       if (submitAttempted) {
@@ -226,7 +233,10 @@ async function runReal(config) {
     });
     emit('login_outcome', { status: loginResult.status, reason: loginResult.reason, submitAttempted: loginResult.submitAttempted, username });
     if (loginResult.status !== 'authenticated') {
-      const diagnosticPath = await saveSanitizedDiagnostics({ phase: 'login', page: loginPage, events: loginEvents, result: loginResult });
+      const diagnosticPath = await saveSanitizedDiagnostics({
+        phase: 'login', page: loginPage, events: loginEvents, result: loginResult,
+        sensitiveValues: [config.fullName, config.dateOfBirth, username, password, mailPassword, mailbox?.address, mailbox?.token],
+      });
       emit('sanitized_diagnostics_saved', { path: diagnosticPath });
       const stored = await persistEncryptedCredentials();
       if (stored) emit('encrypted_credentials_saved', { path: path.relative(process.cwd(), stored.credentialPath) });

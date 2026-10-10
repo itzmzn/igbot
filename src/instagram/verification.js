@@ -18,12 +18,12 @@ async function visibleBodyText(page) {
 }
 
 async function visibleAlertText(page) {
-  return page.locator('[role="alert"], [data-testid*="error" i]')
+  return page.locator('[role="alert"], [role="status"], [aria-live], [data-testid*="error" i]')
     .evaluateAll((items) => items.filter((item) => {
       const rect = item.getBoundingClientRect();
       const style = getComputedStyle(item);
       return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-    }).map((item) => item.textContent ?? '').join('\n'))
+    }).map((item) => item.textContent ?? '').join('\n').slice(0, 5000))
     .catch(() => '');
 }
 
@@ -85,9 +85,62 @@ export function safeInstagramRoute(url) {
   }
 }
 
-export async function collectPageDiagnostics(page, { urlChanges = [], afterSubmit = false } = {}) {
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Redact known run-specific values and common personal/authentication data. */
+export function sanitizeDiagnosticText(value, sensitiveValues = []) {
+  let text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  const exactValues = [...new Set(sensitiveValues
+    .filter((item) => typeof item === 'string' && item.trim().length >= 2)
+    .map((item) => item.trim()))].sort((a, b) => b.length - a.length);
+  for (const secret of exactValues) {
+    text = text.replace(new RegExp(escapeRegExp(secret), 'gi'), '[REDACTED]');
+  }
+  return text
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '[REDACTED_URL]')
+    .replace(/\b(?:sessionid|csrftoken|ds_user_id|mid|ig_did|rur)\s*[:=]\s*[A-Za-z0-9._%+/-]+/gi, '[REDACTED_COOKIE]')
+    .replace(/([?&](?:access_token|auth|token|password|code|otp|session|cookie|email|phone)=)[^&#\s]*/gi, '$1[REDACTED]')
+    .replace(/\b(authorization|cookie|set-cookie|password|otp|verification code)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_TOKEN]')
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[REDACTED_EMAIL]')
+    .replace(/\b(?:\+?\d[\d ()-]{7,}\d)\b/g, '[REDACTED_PHONE]')
+    .replace(/\b\d{4,8}\b/g, '[REDACTED_CODE]')
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[REDACTED_TOKEN]')
+    .slice(0, 500);
+}
+
+export function safeInstagramUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host !== 'instagram.com' && !host.endsWith('.instagram.com')) return 'external://[redacted]';
+    const route = safeInstagramRoute(url);
+    if (route === 'signup') return 'https://www.instagram.com/accounts/emailsignup/';
+    if (route === 'login') return 'https://www.instagram.com/accounts/login/';
+    if (route === 'checkpoint') return 'https://www.instagram.com/checkpoint/';
+    if (route === 'home') return 'https://www.instagram.com/';
+    return 'https://www.instagram.com/[redacted-route]';
+  } catch {
+    return 'unknown://[redacted]';
+  }
+}
+
+function normalizeMessage(message, sensitiveValues) {
+  const text = sanitizeDiagnosticText(message.text, sensitiveValues);
+  if (!text) return null;
+  return {
+    source: message.source,
+    ...(message.field ? { field: message.field } : {}),
+    text,
+  };
+}
+
+export async function collectPageDiagnostics(page, { urlChanges = [], afterSubmit = false, sensitiveValues = [] } = {}) {
   const state = await classifyPage(page, { afterSubmit });
-  const controls = await page.locator('body').evaluate((body) => {
+  const inspected = await page.locator('body').evaluate((body) => {
     const visible = (element) => {
       const rect = element.getBoundingClientRect();
       const style = getComputedStyle(element);
@@ -95,6 +148,56 @@ export async function collectPageDiagnostics(page, { urlChanges = [], afterSubmi
     };
     const inputs = [...body.querySelectorAll('input')].filter(visible);
     const buttons = [...body.querySelectorAll('button,[role="button"]')].filter(visible);
+    const categoryFor = (element) => {
+      const label = [...(element.labels ?? [])].map((item) => item.textContent ?? '').join(' ');
+      const hints = [
+        element.getAttribute('type'), element.getAttribute('name'), element.id,
+        element.getAttribute('autocomplete'), element.getAttribute('aria-label'), label,
+      ].join(' ').toLowerCase();
+      if (/phone|mobile|tel/.test(hints) || element.getAttribute('type') === 'tel') return 'phone';
+      if (/birth|birthday|date of birth|dob/.test(hints) || element.getAttribute('autocomplete') === 'bday') return 'birthday';
+      if (element.getAttribute('type') === 'email' || /email|mail/.test(hints)) return 'email';
+      if (element.getAttribute('type') === 'password' || /password|passwd/.test(hints)) return 'password';
+      if (/user.?name|login/.test(hints)) return 'username';
+      if (/full.?name|first.?name|last.?name|autocomplete.{0,5}name/.test(hints)) return 'fullName';
+      return 'other';
+    };
+    const messages = [];
+    const seen = new Set();
+    const addMessage = (source, field, element) => {
+      if (messages.length >= 100 || !element || !visible(element)) return;
+      const text = (element.innerText ?? element.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (!text) return;
+      const key = `${source}|${field ?? ''}|${text}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      messages.push({ source, ...(field ? { field } : {}), text: text.slice(0, 1200) });
+    };
+    for (const element of body.querySelectorAll('[role="alert"], [role="status"], [aria-live], [data-testid*="error" i]')) {
+      if (!visible(element)) continue;
+      const role = (element.getAttribute('role') ?? '').toLowerCase();
+      const live = (element.getAttribute('aria-live') ?? '').toLowerCase();
+      const source = role === 'alert' ? 'alert' : role === 'status' || live ? 'status' : 'inline';
+      addMessage(source, undefined, element);
+    }
+    const fields = [...body.querySelectorAll('input,select,textarea,[role="combobox"],[aria-invalid="true"]')].filter(visible);
+    for (const element of fields) {
+      const field = categoryFor(element);
+      const ids = [
+        ...(element.getAttribute('aria-describedby') ?? '').split(/\s+/),
+        ...(element.getAttribute('aria-errormessage') ?? '').split(/\s+/),
+      ].filter(Boolean);
+      for (const id of ids) addMessage('field_error', field, document.getElementById(id));
+      if (element.validity?.valid === false && element.validationMessage) {
+        messages.push({ source: 'native_validation', field, text: element.validationMessage.slice(0, 1200) });
+      }
+      const scope = element.closest('label') ?? element.parentElement;
+      if (scope) {
+        for (const nearby of scope.querySelectorAll('[role="alert"],[role="status"],[aria-live],[data-testid*="error" i],[class*="error" i]')) {
+          addMessage('field_error', field, nearby);
+        }
+      }
+    }
     const counts = {};
     for (const input of inputs) {
       const type = (input.getAttribute('type') || 'text').toLowerCase();
@@ -112,23 +215,44 @@ export async function collectPageDiagnostics(page, { urlChanges = [], afterSubmi
     }
     const alerts = [...body.querySelectorAll('[role="alert"],[data-testid*="error" i]')].filter(visible).length;
     return {
-      visibleInputCount: inputs.length,
-      disabledInputCount: inputs.filter((input) => input.disabled).length,
-      inputTypeCounts: counts,
-      birthdayControlCount: body.querySelectorAll('input[type="date"],select').length,
-      visibleButtonCount: buttons.length,
-      disabledButtonCount: buttons.filter((button) => button.disabled || button.getAttribute('aria-disabled') === 'true').length,
-      visibleAlertCount: alerts,
-      buttonKinds: [...buttonKinds].sort(),
+      controls: {
+        visibleInputCount: inputs.length,
+        disabledInputCount: inputs.filter((input) => input.disabled).length,
+        inputTypeCounts: counts,
+        fields: fields.slice(0, 20).map((element) => ({
+          field: categoryFor(element),
+          type: ['email', 'password', 'date', 'search', 'tel', 'text'].includes((element.getAttribute('type') || '').toLowerCase())
+            ? (element.getAttribute('type') || 'text').toLowerCase() : (element.tagName === 'SELECT' ? 'select' : 'other'),
+          required: element.required === true || element.getAttribute('aria-required') === 'true',
+          disabled: element.disabled === true || element.getAttribute('aria-disabled') === 'true',
+          invalid: element.getAttribute('aria-invalid') === 'true',
+          valid: typeof element.validity?.valid === 'boolean' ? element.validity.valid : null,
+          filled: Boolean(element.value),
+        })),
+        birthdayControlCount: body.querySelectorAll('input[type="date"],select').length,
+        visibleButtonCount: buttons.length,
+        disabledButtonCount: buttons.filter((button) => button.disabled || button.getAttribute('aria-disabled') === 'true').length,
+        visibleAlertCount: alerts,
+        buttonKinds: [...buttonKinds].sort(),
+      },
+      messages,
     };
-  }).catch(() => ({ inspection: 'unavailable' }));
+  }).catch(() => ({ controls: { inspection: 'unavailable' }, messages: [] }));
+
+  const messages = inspected.messages
+    .map((message) => normalizeMessage(message, sensitiveValues))
+    .filter(Boolean)
+    .slice(0, 30);
+  const safeHistory = new Set(['signup', 'login', 'checkpoint', 'home', 'instagram_other', 'external', 'unknown']);
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     state,
     route: safeInstagramRoute(page.url()),
-    urlChanges: urlChanges.slice(-20),
-    controls,
+    currentUrl: safeInstagramUrl(page.url()),
+    urlChanges: urlChanges.slice(-20).map((route) => safeHistory.has(route) ? route : 'unknown'),
+    controls: inspected.controls,
+    messages,
   };
 }
 

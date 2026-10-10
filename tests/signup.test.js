@@ -4,7 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchChromium } from '../src/browser/chromium.js';
 import { runSignup } from '../src/instagram/signup.js';
-import { classifyPage, collectPageDiagnostics } from '../src/instagram/verification.js';
+import { classifyPage, collectPageDiagnostics, safeInstagramUrl, sanitizeDiagnosticText } from '../src/instagram/verification.js';
 
 const mockRegistration = {
   email: 'mock.user@example.invalid',
@@ -461,9 +461,71 @@ test('sanitized page diagnostics omit form values and record only control metada
     assert.doesNotMatch(serialized, /do-not-log-this-password|mock\.user@example\.invalid/);
     assert.deepEqual(diagnostics.urlChanges, ['signup', 'checkpoint']);
     assert.equal(diagnostics.controls.inputTypeCounts.password, 1);
+    assert.equal(diagnostics.controls.fields.find((field) => field.field === 'password').filled, true);
+    assert.equal(diagnostics.currentUrl, 'external://[redacted]');
   } finally {
     await browser.close();
   }
+});
+
+test('diagnostic text redacts configured identity, contact data, OTPs, and credentials', () => {
+  const sanitized = sanitizeDiagnosticText(
+    'Dasun Priyanath, dasun@example.test, +1 (555) 222-3333, code 123456, Bearer abc.def, eyJabcdefgh123.abcdefgh123.abcdefgh123 and password-very-secret-value',
+    ['Dasun Priyanath', 'password-very-secret-value'],
+  );
+  assert.doesNotMatch(sanitized, /Dasun Priyanath|dasun@example\.test|555|222-3333|123456|abc\.def|eyJabcdefgh123|password-very-secret-value/);
+  assert.match(sanitized, /\[REDACTED_EMAIL\]/);
+  assert.match(sanitized, /\[REDACTED_PHONE\]/);
+  assert.match(sanitized, /\[REDACTED_CODE\]/);
+  assert.match(sanitized, /Bearer \[REDACTED\]/);
+  assert.match(sanitized, /\[REDACTED_TOKEN\]/);
+});
+
+test('page diagnostics retain sanitized alert, live status, and associated inline field errors', async () => {
+  const browser = await launchChromium();
+  try {
+    const page = await browser.newPage();
+    const secretEmail = 'private.user@example.test';
+    const secretUsername = 'private-user-90001';
+    const secretPassword = 'private-password-value-012345';
+    const markup = `<!doctype html><html><body>
+      <form>
+        <label>Email<input type="email" name="email" value="${secretEmail}" aria-invalid="true" aria-describedby="email-error"></label>
+        <p id="email-error" class="field-error">The address ${secretEmail} is invalid.</p>
+        <label>Username<input name="username" value="${secretUsername}" aria-invalid="true" aria-errormessage="username-error"></label>
+        <div id="username-error" role="alert">The username ${secretUsername} is unavailable.</div>
+        <label>Password<input type="password" name="password" value="${secretPassword}" aria-invalid="true" aria-describedby="password-error"></label>
+        <span id="password-error" class="error">The password must be changed.</span>
+        <div role="status" aria-live="polite">A code 123456 was sent to +1 (555) 222-3333 for ${secretEmail}.</div>
+        <button type="submit">Submit</button>
+      </form>
+    </body></html>`;
+    await page.setContent(markup);
+    const diagnostics = await collectPageDiagnostics(page, {
+      afterSubmit: true,
+      urlChanges: ['signup', 'https://instagram.com/private-user-90001/?token=private'],
+      sensitiveValues: [secretEmail, secretUsername, secretPassword],
+    });
+    const serialized = JSON.stringify(diagnostics);
+    assert.deepEqual(diagnostics.state, { status: 'rejected', reason: 'username_unavailable' });
+    assert.doesNotMatch(serialized, /private\.user@example\.test|private-user-90001|private-password-value|123456|555|222-3333/);
+    assert.deepEqual(diagnostics.urlChanges, ['signup', 'unknown']);
+    assert.ok(diagnostics.messages.some((message) => message.source === 'field_error' && message.field === 'email' && /address .* is invalid/.test(message.text)));
+    assert.ok(diagnostics.messages.some((message) => message.source === 'field_error' && message.field === 'username' && /unavailable/.test(message.text)));
+    assert.ok(diagnostics.messages.some((message) => message.source === 'field_error' && message.field === 'password' && /must be changed/.test(message.text)));
+    assert.ok(diagnostics.messages.some((message) => message.source === 'status' && /code \[REDACTED_CODE\].*\[REDACTED_PHONE\].*\[REDACTED_EMAIL\]/.test(message.text)));
+    assert.ok(diagnostics.controls.fields.some((field) => field.field === 'email' && field.invalid && field.filled));
+    assert.equal(diagnostics.currentUrl, 'external://[redacted]');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Instagram URL diagnostics preserve only known routes and remove query, fragment, and profile paths', () => {
+  assert.equal(safeInstagramUrl('https://www.instagram.com/accounts/emailsignup/?email=user@example.test#token'), 'https://www.instagram.com/accounts/emailsignup/');
+  assert.equal(safeInstagramUrl('https://www.instagram.com/accounts/login/?next=%2Fprivate-user'), 'https://www.instagram.com/accounts/login/');
+  assert.equal(safeInstagramUrl('https://www.instagram.com/private-user-90001/?code=123456'), 'https://www.instagram.com/[redacted-route]');
+  assert.equal(safeInstagramUrl('https://mail.tm/inbox?token=secret'), 'external://[redacted]');
 });
 
 test('informational username feedback is not mistaken for a form error before submission', async () => {
