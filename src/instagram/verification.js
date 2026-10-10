@@ -26,7 +26,7 @@ async function visibleAlertText(page) {
 }
 
 function validationReason(text) {
-  if (/email.{0,50}(?:invalid|not valid|enter a valid)/i.test(text)) return 'invalid_email';
+  if (/email.{0,50}(?:invalid|not valid|must be valid)|(?:enter|provide|use).{0,30}valid email/i.test(text)) return 'invalid_email';
   if (/password.{0,50}(?:weak|too short|invalid|must contain)/i.test(text)) return 'password_rejected';
   if (/(?:birthday|date of birth|born).{0,60}(?:invalid|underage|too young|must be|eligible)|(?:underage|too young).{0,60}(?:birthday|age|born)/i.test(text)) return 'birthday_rejected';
   if (/required field|please fill in all|complete all fields|enter all required/i.test(text)) return 'required_fields';
